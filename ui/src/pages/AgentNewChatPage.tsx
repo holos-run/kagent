@@ -49,7 +49,7 @@ export function AgentNewChatPage() {
   const { namespace, name } = useParams();
 
   const conversations = useAgentConversations(namespace, name);
-  const canAttach = useAgentTakesFiles(namespace && name && `${namespace}/${name}`);
+  const canAttach = useAgentTakesFiles(namespace && name ? { kind: "Agent", namespace, name } : undefined);
   const rows = useMemo(() => conversations.data?.own ?? [], [conversations.data]);
 
   const [isCreating, setCreating] = useState(false);

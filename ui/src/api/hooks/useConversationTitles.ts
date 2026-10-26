@@ -1,3 +1,4 @@
+import { sessionTenant } from "@/api/chat/types";
 import { useEffect, useRef } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { getChatClient } from "@/api/chat";
@@ -81,11 +82,9 @@ export function useConversationTitles(
         targets.map(async (instance) => {
           if (derived.has(instance.id)) return undefined;
           try {
-            if (!instance.agent) return undefined;
             const history = await getChatClient().history({
-
               id: instance.id,
-              agent: instance.agent,
+              agent: sessionTenant(instance.source),
             });
             const first = history.messages.find((message) => message.role === "user");
             const title = autoTitleFrom(first && messageSummary(first));

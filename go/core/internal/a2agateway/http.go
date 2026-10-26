@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	a2atype "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -27,45 +28,47 @@ func NewHTTPHandler(gateway a2asrv.RequestHandler, authenticator auth.AuthProvid
 		handler := &a2asrv.InterceptedHandler{
 			Handler: gateway,
 			Interceptors: []a2asrv.CallInterceptor{&httpAgentRoute{
-				agent: r.PathValue("namespace") + "/" + r.PathValue("name"),
+				agent: httpTenant(r),
 			}},
 		}
 		a2asrv.NewJSONRPCHandler(handler).ServeHTTP(w, r)
 	})
-	mux.Handle("POST "+HTTPPathPrefix+"{namespace}/{name}", rpc)
-	mux.Handle("POST "+HTTPPathPrefix+"{namespace}/{name}/{$}", rpc)
-	mux.Handle("GET "+HTTPPathPrefix+"{namespace}/{name}"+a2asrv.WellKnownAgentCardPath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		card, err := gateway.GetExtendedAgentCard(r.Context(), &a2atype.GetExtendedAgentCardRequest{
-			Tenant: r.PathValue("namespace") + "/" + r.PathValue("name"),
-		})
-		if err != nil {
-			status := http.StatusInternalServerError
-			switch {
-			case errors.Is(err, a2atype.ErrUnauthenticated):
-				status = http.StatusUnauthorized
-			case errors.Is(err, a2atype.ErrUnauthorized):
-				status = http.StatusForbidden
-			case errors.Is(err, a2atype.ErrTaskNotFound):
-				status = http.StatusNotFound
-			case errors.Is(err, a2atype.ErrInvalidRequest):
-				status = http.StatusBadRequest
-			case errors.Is(err, a2atype.ErrUnsupportedOperation):
-				status = http.StatusConflict
+	for _, prefix := range []string{HTTPPathPrefix, HTTPPathPrefix + "ScheduledRun/"} {
+		mux.Handle("POST "+prefix+"{namespace}/{name}", rpc)
+		mux.Handle("POST "+prefix+"{namespace}/{name}/{$}", rpc)
+		mux.Handle("GET "+prefix+"{namespace}/{name}"+a2asrv.WellKnownAgentCardPath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			card, err := gateway.GetExtendedAgentCard(r.Context(), &a2atype.GetExtendedAgentCardRequest{
+				Tenant: httpTenant(r),
+			})
+			if err != nil {
+				status := http.StatusInternalServerError
+				switch {
+				case errors.Is(err, a2atype.ErrUnauthenticated):
+					status = http.StatusUnauthorized
+				case errors.Is(err, a2atype.ErrUnauthorized):
+					status = http.StatusForbidden
+				case errors.Is(err, a2atype.ErrTaskNotFound):
+					status = http.StatusNotFound
+				case errors.Is(err, a2atype.ErrInvalidRequest):
+					status = http.StatusBadRequest
+				case errors.Is(err, a2atype.ErrUnsupportedOperation):
+					status = http.StatusConflict
+				}
+				http.Error(w, http.StatusText(status), status)
+				return
 			}
-			http.Error(w, http.StatusText(status), status)
-			return
-		}
-		data, err := json.Marshal(card)
-		if err != nil {
-			logging.FromContext(r.Context()).ErrorContext(r.Context(), "failed to encode agent card", "error", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if _, err := w.Write(data); err != nil {
-			logging.FromContext(r.Context()).ErrorContext(r.Context(), "failed to write agent card", "error", err)
-		}
-	}))
+			data, err := json.Marshal(card)
+			if err != nil {
+				logging.FromContext(r.Context()).ErrorContext(r.Context(), "failed to encode agent card", "error", err)
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if _, err := w.Write(data); err != nil {
+				logging.FromContext(r.Context()).ErrorContext(r.Context(), "failed to write agent card", "error", err)
+			}
+		}))
+	}
 	return auth.AuthnMiddleware(authenticator)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "private, no-store")
 		if _, ok := auth.AuthSessionFrom(r.Context()); !ok {
@@ -101,4 +104,12 @@ func (h *httpAgentRoute) Before(ctx context.Context, callCtx *a2asrv.CallContext
 		return ctx, nil, a2atype.NewError(a2atype.ErrInvalidRequest, "tenant does not match the Agent URL")
 	}
 	return a2atype.AttachTenant(ctx, h.agent), nil, nil
+}
+
+func httpTenant(r *http.Request) string {
+	tenant := r.PathValue("namespace") + "/" + r.PathValue("name")
+	if strings.HasPrefix(r.URL.Path, HTTPPathPrefix+"ScheduledRun/") {
+		return "ScheduledRun/" + tenant
+	}
+	return tenant
 }

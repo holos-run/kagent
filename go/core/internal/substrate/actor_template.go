@@ -50,7 +50,7 @@ func ActorTemplateForRevision(spec *translator.Revision, revisionID translator.R
 		return nil, fmt.Errorf("runtime revision ID is required")
 	}
 	workerKey := types.NamespacedName{Namespace: spec.Namespace, Name: spec.WorkerPoolName}
-	name := revisionActorTemplateName(spec.AgentName, revisionID)
+	name := revisionActorTemplateName(spec.Name, revisionID)
 	// Config and SDK placeholders contain no Secret values. Render the typed
 	// card only at this boundary.
 	card, err := apia2a.FromProtoAgentCard(spec.AgentCard)

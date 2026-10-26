@@ -10,9 +10,9 @@ import (
 	a2atype "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/google/uuid"
-	"k8s.io/apimachinery/pkg/types"
 
 	apia2a "github.com/kagent-dev/kagent/go/api/a2a"
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	sessionsvc "github.com/kagent-dev/kagent/go/core/internal/service/session"
 	"github.com/kagent-dev/kagent/go/pkg/logging"
@@ -22,7 +22,7 @@ import (
 // its request telemetry before the gateway closes the observation connection.
 const runtimeDrainTimeout = 2 * time.Second
 
-func (g *Gateway) cancelTask(ctx context.Context, agent types.NamespacedName, req *a2atype.CancelTaskRequest) (*a2atype.Task, error) {
+func (g *Gateway) cancelTask(ctx context.Context, agent definition.Reference, req *a2atype.CancelTaskRequest) (*a2atype.Task, error) {
 	if req == nil {
 		return nil, a2atype.ErrInvalidParams
 	}
@@ -59,7 +59,7 @@ func (g *Gateway) cancelTask(ctx context.Context, agent types.NamespacedName, re
 	return result, nil
 }
 
-func (g *Gateway) sendMessage(ctx context.Context, agent types.NamespacedName, req *a2atype.SendMessageRequest) (a2atype.SendMessageResult, error) {
+func (g *Gateway) sendMessage(ctx context.Context, agent definition.Reference, req *a2atype.SendMessageRequest) (a2atype.SendMessageResult, error) {
 	var historyLength *int
 	if req != nil && req.Config != nil {
 		historyLength = req.Config.HistoryLength
@@ -113,7 +113,7 @@ func (g *Gateway) sendMessage(ctx context.Context, agent types.NamespacedName, r
 	return result, nil
 }
 
-func (g *Gateway) subscribeToTask(ctx context.Context, agent types.NamespacedName, req *a2atype.SubscribeToTaskRequest) iter.Seq2[a2atype.Event, error] {
+func (g *Gateway) subscribeToTask(ctx context.Context, agent definition.Reference, req *a2atype.SubscribeToTaskRequest) iter.Seq2[a2atype.Event, error] {
 	if req == nil {
 		return errorEvents(a2atype.ErrInvalidParams)
 	}
@@ -133,7 +133,7 @@ func (g *Gateway) subscribeToTask(ctx context.Context, agent types.NamespacedNam
 	return g.observe(ctx, agent, session, req.ID, nil, nil, client, client.SubscribeToTask(ctx, req))
 }
 
-func (g *Gateway) sendStreamingMessage(ctx context.Context, agent types.NamespacedName, req *a2atype.SendMessageRequest) iter.Seq2[a2atype.Event, error] {
+func (g *Gateway) sendStreamingMessage(ctx context.Context, agent definition.Reference, req *a2atype.SendMessageRequest) iter.Seq2[a2atype.Event, error] {
 	return func(yield func(a2atype.Event, error) bool) {
 		// Reserve only when the caller starts consuming: an unused iterator must
 		// not block lifecycle work with an undispatched reservation.
@@ -180,7 +180,7 @@ func (g *Gateway) sendStreamingMessage(ctx context.Context, agent types.Namespac
 
 // finishSend releases the attempt even after the caller disconnects. A failed
 // actor call is retryable only if persistence proves the input was not accepted.
-func (g *Gateway) finishSend(ctx context.Context, agent types.NamespacedName, message *a2atype.Message, id uuid.UUID, sendErr error) error {
+func (g *Gateway) finishSend(ctx context.Context, agent definition.Reference, message *a2atype.Message, id uuid.UUID, sendErr error) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	revoked, err := g.interactions.RevokeSend(ctx, agent, message, id)
@@ -195,7 +195,7 @@ func (g *Gateway) finishSend(ctx context.Context, agent types.NamespacedName, me
 // observe owns only this observer's actor connection. Disconnecting cannot
 // cancel execution. Final results come from the service after native cleanup
 // acknowledges their saved version, independently of actor pause or suspend.
-func (g *Gateway) observe(ctx context.Context, agent types.NamespacedName, session *apiv1.Session, taskID a2atype.TaskID, message *a2atype.Message, historyLength *int, client *a2aclient.Client, events iter.Seq2[a2atype.Event, error]) iter.Seq2[a2atype.Event, error] {
+func (g *Gateway) observe(ctx context.Context, agent definition.Reference, session *apiv1.Session, taskID a2atype.TaskID, message *a2atype.Message, historyLength *int, client *a2aclient.Client, events iter.Seq2[a2atype.Event, error]) iter.Seq2[a2atype.Event, error] {
 	// Keep the original operation's permissions when reading its result. The
 	// actor may assign a task ID, but that does not turn a send into an update.
 	readResult := func() (*a2atype.Task, error) {
@@ -301,7 +301,7 @@ func (g *Gateway) dial(ctx context.Context, session *apiv1.Session) (*a2aclient.
 	return client, nil
 }
 
-func (g *Gateway) awaitTaskCompletion(ctx context.Context, agent types.NamespacedName, message *a2atype.Message, taskID a2atype.TaskID, historyLength *int) (*a2atype.Task, error) {
+func (g *Gateway) awaitTaskCompletion(ctx context.Context, agent definition.Reference, message *a2atype.Message, taskID a2atype.TaskID, historyLength *int) (*a2atype.Task, error) {
 	timer := time.NewTicker(50 * time.Millisecond)
 	defer timer.Stop()
 	for {

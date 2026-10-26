@@ -10,6 +10,7 @@ import (
 	a2agrpc "github.com/a2aproject/a2a-go/v2/a2agrpc/v1"
 	a2apb "github.com/a2aproject/a2a-go/v2/a2apb/v1"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 )
 
@@ -30,13 +31,13 @@ func (c *A2AClient) ForAgent(ctx context.Context, agent *apiv1.ResourceReference
 	return c.forAgent(ctx, agent, "")
 }
 
-// ForSession resolves its Agent and supplies the conversation context on sends.
+// ForSession routes to the persisted source and supplies the conversation context on sends.
 func (c *A2AClient) ForSession(ctx context.Context, id string) (*a2aclient.Client, error) {
 	response, err := newSessionClient(c.client).GetSession(ctx, &apiv1.GetSessionRequest{SessionId: id})
 	if err != nil {
 		return nil, err
 	}
-	return c.forAgent(ctx, response.GetSession().GetAgent(), id)
+	return c.forAgent(ctx, definition.FromSession(response.GetSession()).Ref(), id)
 }
 
 // ListTaskPushConfigsPage preserves the pagination token that the upstream
@@ -46,7 +47,7 @@ func (c *A2AClient) ListTaskPushConfigsPage(ctx context.Context, sessionID, task
 	if err != nil {
 		return nil, err
 	}
-	agent := response.GetSession().GetAgent()
+	agent := definition.FromSession(response.GetSession()).Ref()
 	if agent.GetNamespace() == "" || agent.GetName() == "" {
 		return nil, fmt.Errorf("agent namespace and name are required")
 	}

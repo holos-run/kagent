@@ -9,9 +9,9 @@ import (
 
 	a2atype "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/uuid"
-	"k8s.io/apimachinery/pkg/types"
 
 	apia2a "github.com/kagent-dev/kagent/go/api/a2a"
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
 	"github.com/kagent-dev/kagent/go/core/pkg/auth"
@@ -43,10 +43,9 @@ func TestPrepareSendStampsInboundTimeline(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			id := uuid.NewString()
-			agent := types.NamespacedName{Namespace: "team-a", Name: "assistant"}
+			agent := definition.Reference{Kind: definition.Agent, Namespace: "team-a", Name: "assistant"}
 			stored := &apiv1.Session{Id: id, ContextId: id, State: apiv1.RuntimeState_RUNTIME_STATE_READY,
-				Operation: apiv1.RuntimeOperation_RUNTIME_OPERATION_NONE,
-				Agent:     &apiv1.ResourceReference{Namespace: agent.Namespace, Name: agent.Name}}
+				Operation: apiv1.RuntimeOperation_RUNTIME_OPERATION_NONE, Source: &apiv1.Session_Agent{Agent: &apiv1.AgentProvenance{Ref: &apiv1.ResourceReference{Namespace: agent.Namespace, Name: agent.Name}}}}
 			original := a2atype.NewMessage(a2atype.MessageRoleUser, a2atype.NewTextPart("Approved"))
 			originalPosition := time.Now().Add(-time.Hour).UTC()
 			apia2a.SetTimelinePosition(original, originalPosition)
@@ -55,7 +54,7 @@ func TestPrepareSendStampsInboundTimeline(t *testing.T) {
 			if test.accepted {
 				tasks.dispatchErr = database.ErrMessageAccepted
 			}
-			service := NewInteractionService(tasks, nil, NewService(&serviceTestStore{getResult: stored}, serviceTestAuthorizer{}, nil), false)
+			service := NewInteractionService(tasks, nil, nil, NewService(&serviceTestStore{getResult: stored}, serviceTestAuthorizer{}, nil), false)
 			message := a2atype.NewMessage(a2atype.MessageRoleUser, a2atype.NewTextPart("Approved"))
 			message.ID, message.ContextID, message.TaskID = original.ID, id, test.taskID
 			apia2a.SetTimelinePosition(message, time.Unix(1, 0))
@@ -123,68 +122,68 @@ func TestTaskPageTokenRejectsInvalidUTF8(t *testing.T) {
 
 func TestInteractionsEnforcePermissionsWithoutGateway(t *testing.T) {
 	id := uuid.NewString()
-	agent := types.NamespacedName{Namespace: "team-a", Name: "assistant"}
+	agent := definition.Reference{Kind: definition.Agent, Namespace: "team-a", Name: "assistant"}
 	for _, operation := range []struct {
 		name string
 		verb auth.Verb
-		call func(context.Context, *InteractionService, types.NamespacedName) error
+		call func(context.Context, *InteractionService, definition.Reference) error
 	}{
-		{name: "settled task", verb: auth.VerbGet, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "settled task", verb: auth.VerbGet, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, err := s.GetSettledTask(ctx, agent, id, "task", nil)
 			return err
 		}},
-		{name: "send result", verb: auth.VerbCreate, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "send result", verb: auth.VerbCreate, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, err := s.GetSendResult(ctx, agent, &a2atype.Message{ID: "input", ContextID: id}, "task", nil)
 			return err
 		}},
-		{name: "cancel result", verb: auth.VerbUpdate, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "cancel result", verb: auth.VerbUpdate, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, err := s.GetCancelResult(ctx, agent, "task")
 			return err
 		}},
-		{name: "accepted message", verb: auth.VerbCreate, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "accepted message", verb: auth.VerbCreate, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, err := s.GetTaskByMessage(ctx, agent, &a2atype.Message{ID: "input", ContextID: id})
 			return err
 		}},
-		{name: "revoke send", verb: auth.VerbCreate, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "revoke send", verb: auth.VerbCreate, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, err := s.RevokeSend(ctx, agent, &a2atype.Message{ID: "input", ContextID: id}, uuid.New())
 			return err
 		}},
-		{name: "get", verb: auth.VerbGet, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "get", verb: auth.VerbGet, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, err := s.GetTask(ctx, agent, &a2atype.GetTaskRequest{ID: "task"})
 			return err
 		}},
-		{name: "list", verb: auth.VerbGet, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "list", verb: auth.VerbGet, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, err := s.ListTasks(ctx, agent, &a2atype.ListTasksRequest{ContextID: id})
 			return err
 		}},
-		{name: "push create", verb: auth.VerbCreate, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "push create", verb: auth.VerbCreate, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, err := s.CreateTaskPushConfig(ctx, agent, &a2atype.PushConfig{TaskID: "task", ID: "callback", URL: "https://receiver.example/callback", Auth: &a2atype.PushAuthInfo{Scheme: "Bearer"}})
 			return err
 		}},
-		{name: "push get", verb: auth.VerbGet, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "push get", verb: auth.VerbGet, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, err := s.GetTaskPushConfig(ctx, agent, &a2atype.GetTaskPushConfigRequest{TaskID: "task", ID: "callback"})
 			return err
 		}},
-		{name: "push list", verb: auth.VerbGet, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "push list", verb: auth.VerbGet, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, err := s.ListTaskPushConfigs(ctx, agent, &a2atype.ListTaskPushConfigRequest{TaskID: "task"})
 			return err
 		}},
-		{name: "push delete", verb: auth.VerbDelete, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "push delete", verb: auth.VerbDelete, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			return s.DeleteTaskPushConfig(ctx, agent, &a2atype.DeleteTaskPushConfigRequest{TaskID: "task", ID: "callback"})
 		}},
-		{name: "subscribe", verb: auth.VerbGet, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "subscribe", verb: auth.VerbGet, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, _, err := s.PrepareTaskSubscription(ctx, agent, &a2atype.SubscribeToTaskRequest{ID: "task"})
 			return err
 		}},
-		{name: "cancel", verb: auth.VerbUpdate, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "cancel", verb: auth.VerbUpdate, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, _, err := s.PrepareCancelTask(ctx, agent, &a2atype.CancelTaskRequest{ID: "task"})
 			return err
 		}},
-		{name: "send", verb: auth.VerbCreate, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "send", verb: auth.VerbCreate, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, err := s.PrepareSend(ctx, agent, &a2atype.SendMessageRequest{Message: &a2atype.Message{ID: "input", ContextID: id}})
 			return err
 		}},
-		{name: "reply", verb: auth.VerbUpdate, call: func(ctx context.Context, s *InteractionService, agent types.NamespacedName) error {
+		{name: "reply", verb: auth.VerbUpdate, call: func(ctx context.Context, s *InteractionService, agent definition.Reference) error {
 			_, err := s.PrepareSend(ctx, agent, &a2atype.SendMessageRequest{Message: &a2atype.Message{ID: "input", TaskID: "task"}})
 			return err
 		}},
@@ -192,7 +191,7 @@ func TestInteractionsEnforcePermissionsWithoutGateway(t *testing.T) {
 		for _, test := range []struct {
 			name   string
 			ctx    context.Context
-			agent  types.NamespacedName
+			agent  definition.Reference
 			denied bool
 			getErr error
 			want   error
@@ -203,18 +202,17 @@ func TestInteractionsEnforcePermissionsWithoutGateway(t *testing.T) {
 			{name: "missing session", ctx: serviceTestContext("visitor"), agent: agent, getErr: database.ErrNotFound, want: a2atype.ErrTaskNotFound},
 			{name: "read-only share", ctx: auth.ShareContextTo(serviceTestContext("visitor"), &auth.ShareContext{SessionID: id, UserID: "owner"}), agent: agent},
 			{name: "denied share recipient", ctx: auth.ShareContextTo(serviceTestContext("visitor"), &auth.ShareContext{SessionID: id, UserID: "owner"}), agent: agent, denied: true, want: a2atype.ErrUnauthorized},
-			{name: "other Agent", ctx: auth.ShareContextTo(serviceTestContext("visitor"), &auth.ShareContext{SessionID: id, UserID: "owner"}), agent: types.NamespacedName{Namespace: "team-a", Name: "other"}, denied: true, want: a2atype.ErrUnauthorized},
+			{name: "other Agent", ctx: auth.ShareContextTo(serviceTestContext("visitor"), &auth.ShareContext{SessionID: id, UserID: "owner"}), agent: definition.Reference{Kind: definition.Agent, Namespace: "team-a", Name: "other"}, denied: true, want: a2atype.ErrUnauthorized},
 		} {
 			t.Run(operation.name+"/"+test.name, func(t *testing.T) {
-				stored := &apiv1.Session{Id: id, ContextId: id, State: apiv1.RuntimeState_RUNTIME_STATE_SUSPENDED,
-					Agent: &apiv1.ResourceReference{Namespace: agent.Namespace, Name: agent.Name}}
+				stored := &apiv1.Session{Id: id, ContextId: id, State: apiv1.RuntimeState_RUNTIME_STATE_SUSPENDED, Source: &apiv1.Session_Agent{Agent: &apiv1.AgentProvenance{Ref: &apiv1.ResourceReference{Namespace: agent.Namespace, Name: agent.Name}}}}
 				sessionStore := &serviceTestStore{getResult: stored, getErr: test.getErr}
 				authorizer := &recordingAuthorizer{denied: map[string]bool{id: test.denied}}
 				if test.getErr != nil {
 					sessionStore.getResult = nil
 				}
 				tasks := &interactionTestStore{task: &a2atype.Task{ID: "task", ContextID: id, Status: a2atype.TaskStatus{State: a2atype.TaskStateCompleted}}}
-				service := NewInteractionService(tasks, nil, NewService(sessionStore, authorizer, nil), false)
+				service := NewInteractionService(tasks, nil, nil, NewService(sessionStore, authorizer, nil), false)
 				want := test.want
 				_, shared := auth.ShareContextFrom(test.ctx)
 				if shared && operation.verb != auth.VerbGet {
@@ -243,8 +241,8 @@ func TestInteractionsEnforcePermissionsWithoutGateway(t *testing.T) {
 }
 
 func TestInteractionsRequireAgentForUnfilteredTaskList(t *testing.T) {
-	service := NewInteractionService(nil, nil, nil, false)
-	for _, agent := range []types.NamespacedName{
+	service := NewInteractionService(nil, nil, nil, nil, false)
+	for _, agent := range []definition.Reference{
 		{},
 		{Namespace: "team-a"},
 		{Name: "assistant"},
@@ -261,14 +259,14 @@ func TestExistingConversationDoesNotRequireCurrentAgentGrant(t *testing.T) {
 	for _, denySession := range []bool{false, true} {
 		t.Run(fmt.Sprintf("session-denied=%v", denySession), func(t *testing.T) {
 			id := uuid.NewString()
-			agent := types.NamespacedName{Namespace: "team-a", Name: "assistant"}
-			stored := &apiv1.Session{Id: id, ContextId: id, Creator: "alice", Agent: &apiv1.ResourceReference{Namespace: agent.Namespace, Name: agent.Name}, State: apiv1.RuntimeState_RUNTIME_STATE_READY}
+			agent := definition.Reference{Kind: definition.Agent, Namespace: "team-a", Name: "assistant"}
+			stored := &apiv1.Session{Id: id, ContextId: id, Creator: "alice", Source: &apiv1.Session_Agent{Agent: &apiv1.AgentProvenance{Ref: &apiv1.ResourceReference{Namespace: agent.Namespace, Name: agent.Name}}}, State: apiv1.RuntimeState_RUNTIME_STATE_READY}
 			policy := &recordingAuthorizer{deniedTypes: map[string]bool{"Agent": true, "Session": denySession}}
 			sessions := NewService(&serviceTestStore{getResult: stored}, policy, serviceTestWorkflow{})
 			ctx := serviceTestContext("alice")
 			message := a2atype.NewMessage(a2atype.MessageRoleUser, a2atype.NewTextPart("continue"))
 			message.ContextID = id
-			_, err := NewInteractionService(nil, nil, sessions, false).messageSession(ctx, agent, message)
+			_, err := NewInteractionService(nil, nil, nil, sessions, false).messageSession(ctx, agent, message)
 			if denySession {
 				if !errors.Is(err, a2atype.ErrUnauthorized) {
 					t.Fatalf("error = %v, want Session denial", err)

@@ -1,3 +1,4 @@
+import { toRef } from "@/api/domain/common";
 import { useMemo } from "react";
 import { Alert, Button, Card, Empty, Space, Tag, Typography } from "antd";
 import { useTheme } from "@emotion/react";
@@ -258,7 +259,7 @@ function RecentAgent({ row, autoTitle }: { row: AgentInstance; autoTitle?: strin
           {conversationTitle(row, autoTitle)}
         </Link>
         <Text css={{ display: "block", color: theme.color.textMuted, fontSize: 12 }}>
-          {row.agent ?? "template not reported"}
+          {toRef(row.source.namespace, row.source.name)}
         </Text>
       </div>
       <div css={{ flexShrink: 0, textAlign: "right" }}>

@@ -13,15 +13,15 @@ import (
 	a2apb "github.com/a2aproject/a2a-go/v2/a2apb/v1"
 	"github.com/a2aproject/a2a-go/v2/a2apb/v1/pbconv"
 	"google.golang.org/protobuf/proto"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
 	"github.com/kagent-dev/kagent/go/pkg/logging"
 )
 
 // validatePushConfig checks the fields supported by the OSS callback sender.
-func validatePushConfig(agent types.NamespacedName, input *a2a.PushConfig, allowHTTP bool) (*a2a.PushConfig, error) {
+func validatePushConfig(agent definition.Reference, input *a2a.PushConfig, allowHTTP bool) (*a2a.PushConfig, error) {
 	if input == nil {
 		return nil, a2a.ErrInvalidParams
 	}
@@ -49,7 +49,7 @@ func validatePushURL(raw string, allowHTTP bool) (*url.URL, error) {
 	return endpoint, nil
 }
 
-func initialPushConfig(agent types.NamespacedName, req *a2a.SendMessageRequest, allowHTTP bool) (*a2a.PushConfig, error) {
+func initialPushConfig(agent definition.Reference, req *a2a.SendMessageRequest, allowHTTP bool) (*a2a.PushConfig, error) {
 	if req == nil || req.Config == nil || req.Config.PushConfig == nil {
 		return nil, nil
 	}

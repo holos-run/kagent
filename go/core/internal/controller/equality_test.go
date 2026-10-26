@@ -11,17 +11,15 @@ import (
 	"istio.io/istio/pkg/kube/krt"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	kagentv1alpha3 "github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/translator"
 )
 
 func equalityTestReconciliation() AgentReconciliation {
 	return AgentReconciliation{
-		Agent: &kagentv1alpha3.Agent{ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "agent"}},
-		Target: &compiledTarget{Revision: translator.Revision{
-			Namespace: "test", AgentName: "agent",
-			AgentCard: &a2apb.AgentCard{Name: "agent"},
-		},
+		Source: agentSource(&kagentv1alpha3.Agent{ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "agent"}}),
+		Target: &compiledTarget{Revision: translator.Revision{Source: definition.Source{Kind: definition.Agent, Namespace: "test", Name: "agent"}, AgentCard: &a2apb.AgentCard{Name: "agent"}},
 			RevisionID: translator.RevisionID{1},
 			ActorTemplate: &ateapipb.ActorTemplate{
 				Metadata: &ateapipb.ResourceMetadata{Atespace: "test", Name: "runtime"},
@@ -54,7 +52,7 @@ func TestAgentReconciliationEquality(t *testing.T) {
 			proto.Size(r.Target.ActorTemplate)
 			proto.Size(r.ObservedActorTemplate)
 		}, equal: true},
-		{name: "template source", change: func(r *AgentReconciliation) { r.Agent.Generation++ }},
+		{name: "template source", change: func(r *AgentReconciliation) { r.Deleting = true }},
 		{name: "live grants", change: func(r *AgentReconciliation) {
 			r.EgressGrant.Destinations = []string{"https://tickets.example.com:443"}
 		}},
@@ -91,10 +89,7 @@ func TestAgentReconciliationEquality(t *testing.T) {
 
 func equalityTestObservation() AgentRuntimeObservation {
 	state := equalityTestReconciliation()
-	return AgentRuntimeObservation{
-		Namespace: "test", AgentName: "agent",
-		RevisionID: state.Target.RevisionID, Template: state.ObservedActorTemplate, Failure: state.PreparationFailure,
-	}
+	return AgentRuntimeObservation{Source: definition.Source{Kind: definition.Agent, Namespace: "test", Name: "agent"}, RevisionID: state.Target.RevisionID, Template: state.ObservedActorTemplate, Failure: state.PreparationFailure}
 }
 
 func TestAgentRuntimeObservationEquality(t *testing.T) {
@@ -108,7 +103,7 @@ func TestAgentRuntimeObservationEquality(t *testing.T) {
 		{name: "protobuf reflection", change: func(o *AgentRuntimeObservation) { o.Template.ProtoReflect() }, equal: true},
 		{name: "protobuf caches", change: func(o *AgentRuntimeObservation) { proto.Size(o.Template) }, equal: true},
 		{name: "namespace", change: func(o *AgentRuntimeObservation) { o.Namespace = "other" }},
-		{name: "agent", change: func(o *AgentRuntimeObservation) { o.AgentName = "other" }},
+		{name: "agent", change: func(o *AgentRuntimeObservation) { o.Name = "other" }},
 		{name: "revision", change: func(o *AgentRuntimeObservation) { o.RevisionID[0]++ }},
 		{name: "template identity", change: func(o *AgentRuntimeObservation) { o.Template.Metadata.Uid = "changed" }},
 		{name: "template status", change: func(o *AgentRuntimeObservation) { o.Template.Status.GoldenSnapshotStatus.ErrorMessage = "changed" }},

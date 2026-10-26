@@ -9,6 +9,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	"github.com/kagent-dev/kagent/go/core/pkg/auth"
 )
 
@@ -42,7 +43,8 @@ func (p *Provider) Authenticate(ctx context.Context, headers http.Header, query 
 	if err != nil {
 		return nil, err
 	}
-	if session.Creator == "" || session.GetAgent().GetNamespace() == "" || session.GetAgent().GetName() == "" {
+	source := definition.FromSession(session)
+	if session.Creator == "" || source.Namespace == "" || source.Name == "" {
 		return nil, fmt.Errorf("actor session has no owner or agent")
 	}
 	bound := identity.(runtimeSession)

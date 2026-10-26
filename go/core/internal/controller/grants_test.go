@@ -53,7 +53,7 @@ func TestAgentEgressErrorsDoNotBlockCompilation(t *testing.T) {
 			})
 			condition := meta.FindStatusCondition(collections.AgentStatuses.GetKey("team-a/assistant").Status.Conditions, test.condition)
 			require.Equal(t, test.reason, condition.Reason)
-			state := collections.Reconciliations.GetKey("team-a/assistant")
+			state := collections.Reconciliations.GetKey("Agent/team-a/assistant")
 			require.NotNil(t, state.Target)
 			require.Nil(t, state.CompilationFailure)
 			require.Empty(t, state.EgressGrant.Destinations)
@@ -71,7 +71,7 @@ func TestAgentGrantChangesReconcileWithoutRuntimeChange(t *testing.T) {
 		template.Status = sandboxGoldenStatus()
 		store := &fakeRuntimeRevisionStore{definitionSources: []database.RuntimeEgressSource{{Kind: database.RuntimeEgressAgent, Namespace: "team-a", Name: "assistant"}}}
 		backend := &preparationTestBackend{templates: &fakeActorTemplates{template: template}, store: store}
-		r := newReconciler(collections, backend, backend, kagentfake.NewSimpleClientset(initial.Agent.DeepCopy()).ApiV1alpha3())
+		r := newReconciler(collections, backend, backend, kagentfake.NewSimpleClientset((*collections.Agents.GetKey(initial.Source.Namespace + "/" + initial.Source.Name)).DeepCopy()).ApiV1alpha3())
 		ctx, cancel := context.WithCancel(t.Context())
 		var workers sync.WaitGroup
 		workers.Go(func() { assert.NoError(t, r.Start(ctx)) })
@@ -81,7 +81,7 @@ func TestAgentGrantChangesReconcileWithoutRuntimeChange(t *testing.T) {
 		store.sources = nil
 		policy := &v1alpha3.EgressPolicy{ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "access"}, Spec: v1alpha3.EgressPolicySpec{Destinations: []v1alpha3.EgressDestination{{Origin: "https://tickets.example.com"}}}}
 		collections.EgressPolicies.(krt.StaticCollection[*v1alpha3.EgressPolicy]).UpdateObject(policy)
-		agent := initial.Agent.DeepCopy()
+		agent := (*collections.Agents.GetKey(initial.Source.Namespace + "/" + initial.Source.Name)).DeepCopy()
 		agent.Spec.EgressPolicyRefs = []corev1.LocalObjectReference{{Name: policy.Name}}
 		collections.Agents.(krt.StaticCollection[*v1alpha3.Agent]).UpdateObject(agent)
 		synctest.Wait()
@@ -142,7 +142,7 @@ func TestAgentGrantsSurviveUnrelatedCompilationFailure(t *testing.T) {
 				policy := &v1alpha3.EgressPolicy{ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "access"}, Spec: v1alpha3.EgressPolicySpec{Destinations: []v1alpha3.EgressDestination{{Origin: "https://tickets.example.com"}}}}
 				policies.UpdateObject(policy)
 				synctest.Wait()
-				state := collections.Reconciliations.GetKey("team-a/assistant")
+				state := collections.Reconciliations.GetKey("Agent/team-a/assistant")
 				require.Nil(t, state.Target)
 				require.NotNil(t, state.CompilationFailure)
 				require.Contains(t, state.CompilationFailure.Message, missing)
@@ -180,10 +180,10 @@ func TestAgentGrantWriteFailureAndRetirementApplyActors(t *testing.T) {
 	collections, _ := newPreparationTestCollections(t, "gvisor")
 	state := collections.Reconciliations.List()[0]
 	store := &fakeRuntimeRevisionStore{pairErr: errors.New("response lost")}
-	r := &Reconciler{collections: collections, store: store, status: kagentfake.NewSimpleClientset(state.Agent.DeepCopy()).ApiV1alpha3()}
+	r := &Reconciler{collections: collections, store: store, status: kagentfake.NewSimpleClientset((*collections.Agents.GetKey(state.Source.Namespace + "/" + state.Source.Name)).DeepCopy()).ApiV1alpha3()}
 	require.ErrorIs(t, r.reconcileAgent(t.Context(), state.ResourceName()), store.pairErr)
 	require.Empty(t, store.sources, "a failed write retries preparation before applying actors")
-	collections.Agents.(krt.StaticCollection[*v1alpha3.Agent]).DeleteObject(state.ResourceName())
+	collections.Agents.(krt.StaticCollection[*v1alpha3.Agent]).DeleteObject(state.Source.Namespace + "/" + state.Source.Name)
 	waitFor(t, func() bool { return collections.Reconciliations.GetKey(state.ResourceName()) == nil })
 	require.NoError(t, r.reconcileAgent(t.Context(), state.ResourceName()))
 	require.Equal(t, []database.RuntimeEgressSource{{Kind: database.RuntimeEgressAgent, Namespace: "team-a", Name: "assistant"}}, store.sources)

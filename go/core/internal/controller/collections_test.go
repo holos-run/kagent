@@ -15,6 +15,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	configv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/config/v1"
 	kagentv1alpha3 "github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/translator"
@@ -59,7 +60,7 @@ func TestReconciliationCollectionsCompileAndObserveRevision(t *testing.T) {
 	}
 	collections.ModelConfigStatuses, collections.ResolvedModelConfigs = newModelConfigReconciliations(collections.ModelConfigs, collections.ConfigMaps, collections.Secrets, opts)
 	collections.Agents = krt.NewStaticCollection(nil, []*kagentv1alpha3.Agent{testAgent(template, matchingHarness)}, opts.WithName("Agents")...)
-	collections.Reconciliations = newAgentReconciliations(
+	collections.Reconciliations = testAgentReconciliations(
 		collections.Agents, translator.Collections{
 			Harnesses: collections.Harnesses, AgentTemplates: collections.AgentTemplates, ResolvedModelConfigs: collections.ResolvedModelConfigs,
 			RemoteMCPServers: collections.RemoteMCPServers, ConfigMaps: collections.ConfigMaps,
@@ -154,7 +155,7 @@ func TestReconciliationReportsRuntimeValidationAsUnsupported(t *testing.T) {
 			_, resolvedModels := newModelConfigReconciliations(krttest.GetMockCollection[*kagentv1alpha3.ModelConfig](mock), configMaps, secrets, opts)
 			settings := testRuntimeDefaults()
 			settings.MaxContentLength = new(int64(-1))
-			states := newAgentReconciliations(
+			states := testAgentReconciliations(
 				krt.NewStaticCollection(nil, []*kagentv1alpha3.Agent{testAgent(template, runtimeHarness)}, opts.WithName("Agents")...),
 				translator.Collections{
 					Harnesses: krttest.GetMockCollection[*kagentv1alpha3.Harness](mock), AgentTemplates: krttest.GetMockCollection[*kagentv1alpha3.AgentTemplate](mock),
@@ -162,8 +163,8 @@ func TestReconciliationReportsRuntimeValidationAsUnsupported(t *testing.T) {
 					RemoteMCPServers: krttest.GetMockCollection[*kagentv1alpha3.RemoteMCPServer](mock), WorkerPools: krttest.GetMockCollection[*atev1.WorkerPool](mock),
 				}, krt.NewStaticCollection[AgentRuntimeObservation](nil, nil, opts.WithName("Observations")...), opts, settings, nil,
 			)
-			waitFor(t, func() bool { return states.GetKey("team-a/assistant") != nil })
-			state := states.GetKey("team-a/assistant")
+			waitFor(t, func() bool { return states.GetKey("Agent/team-a/assistant") != nil })
+			state := states.GetKey("Agent/team-a/assistant")
 			require.Nil(t, state.Target)
 			require.NotNil(t, state.CompilationFailure)
 			require.Equal(t, kagentv1alpha3.AgentConditionCompatible, state.CompilationFailure.Condition)
@@ -226,12 +227,12 @@ func TestReconciliationWorkerPoolSandboxClass(t *testing.T) {
 				{ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "unselected"}, Spec: atev1.WorkerPoolSpec{SandboxClasses: []atev1.WorkerPoolSandboxClass{{Name: atev1.SandboxClassMicroVM}}}},
 			}, opts.WithName("WorkerPools")...)
 			observations := krt.NewStaticCollection[AgentRuntimeObservation](nil, nil, opts.WithName("AgentRuntimeObservations")...)
-			reconciliations := newAgentReconciliations(agents, translator.Collections{
+			reconciliations := testAgentReconciliations(agents, translator.Collections{
 				Harnesses: krttest.GetMockCollection[*kagentv1alpha3.Harness](mock), AgentTemplates: templates, ResolvedModelConfigs: resolvedModels,
 				RemoteMCPServers: krttest.GetMockCollection[*kagentv1alpha3.RemoteMCPServer](mock),
 				ConfigMaps:       configMaps, Secrets: secrets, WorkerPools: workerPools,
 			}, observations, opts, testRuntimeDefaults(), nil)
-			key := "team-a/assistant"
+			key := "Agent/team-a/assistant"
 			waitFor(t, func() bool {
 				state := reconciliations.GetKey(key)
 				return state != nil && state.CompilationFailure != nil
@@ -255,9 +256,7 @@ func TestReconciliationWorkerPoolSandboxClass(t *testing.T) {
 			gvisorTemplate := proto.CloneOf(baseline.Target.ActorTemplate)
 			observed := proto.CloneOf(gvisorTemplate)
 			observed.Metadata.Uid = "actor-template-uid"
-			observations.UpdateObject(AgentRuntimeObservation{
-				Namespace: template.Namespace, AgentName: template.Name, RevisionID: gvisorRevision, Template: observed,
-			})
+			observations.UpdateObject(AgentRuntimeObservation{Source: definition.Source{Kind: definition.Agent, Namespace: template.Namespace, Name: template.Name}, RevisionID: gvisorRevision, Template: observed})
 			waitFor(t, func() bool { return reconciliations.GetKey(key).ObservedActorTemplate != nil })
 
 			for _, step := range []struct {
@@ -363,7 +362,7 @@ func TestClaudeReconciliationCompilesActorTemplate(t *testing.T) {
 	_, resolvedModelConfigs := newModelConfigReconciliations(
 		krttest.GetMockCollection[*kagentv1alpha3.ModelConfig](mock), configMaps, secrets, opts,
 	)
-	reconciliations := newAgentReconciliations(
+	reconciliations := testAgentReconciliations(
 		agents, translator.Collections{
 			Harnesses: krttest.GetMockCollection[*kagentv1alpha3.Harness](mock), AgentTemplates: templates, ResolvedModelConfigs: resolvedModelConfigs,
 			RemoteMCPServers: krttest.GetMockCollection[*kagentv1alpha3.RemoteMCPServer](mock),
@@ -419,7 +418,7 @@ func TestCodexReconciliationCompilesActorTemplate(t *testing.T) {
 	_, resolvedModelConfigs := newModelConfigReconciliations(
 		krttest.GetMockCollection[*kagentv1alpha3.ModelConfig](mock), configMaps, secrets, opts,
 	)
-	reconciliations := newAgentReconciliations(
+	reconciliations := testAgentReconciliations(
 		agents, translator.Collections{
 			Harnesses: krttest.GetMockCollection[*kagentv1alpha3.Harness](mock), AgentTemplates: templates, ResolvedModelConfigs: resolvedModelConfigs,
 			RemoteMCPServers: krttest.GetMockCollection[*kagentv1alpha3.RemoteMCPServer](mock),
@@ -472,7 +471,7 @@ func TestReconciliationTracksSharedAgentTemplate(t *testing.T) {
 	configMaps := krttest.GetMockCollection[*corev1.ConfigMap](mock)
 	secrets := krttest.GetMockCollection[*corev1.Secret](mock)
 	_, resolvedModelConfigs := newModelConfigReconciliations(modelConfigs, configMaps, secrets, opts)
-	reconciliations := newAgentReconciliations(
+	reconciliations := testAgentReconciliations(
 		agents, translator.Collections{
 			Harnesses: krttest.GetMockCollection[*kagentv1alpha3.Harness](mock), AgentTemplates: templates, ResolvedModelConfigs: resolvedModelConfigs,
 			RemoteMCPServers: krttest.GetMockCollection[*kagentv1alpha3.RemoteMCPServer](mock),
@@ -483,7 +482,7 @@ func TestReconciliationTracksSharedAgentTemplate(t *testing.T) {
 	var initial string
 	waitFor(t, func() bool {
 		for _, state := range reconciliations.List() {
-			if state.Agent.Name == root.Name && state.CompilationFailure == nil {
+			if state.Source.Name == root.Name && state.CompilationFailure == nil {
 				initial = state.Target.RevisionID.String()
 				return true
 			}
@@ -495,7 +494,7 @@ func TestReconciliationTracksSharedAgentTemplate(t *testing.T) {
 	templates.UpdateObject(updated)
 	waitFor(t, func() bool {
 		for _, state := range reconciliations.List() {
-			if state.Agent.Name == root.Name {
+			if state.Source.Name == root.Name {
 				return state.CompilationFailure == nil && state.Target.RevisionID.String() != initial
 			}
 		}

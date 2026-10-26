@@ -1,3 +1,5 @@
+import { sessionTenant } from "../chat/types";
+import type { ScheduledRun } from "../domain/scheduledRuns";
 import { RuntimeState, RuntimeOperation } from "@/generated/kagent/api/v1/runtime_pb";
 import { AgentService, type Agent as PbAgent } from "@/generated/kagent/api/v1/agents_pb";
 import type { Agent, AgentResource } from "../domain/agents";
@@ -560,9 +562,8 @@ const INSTANCE_OPERATION_BY_ENUM: Record<
 /**
  * Map a Session protobuf into the existing conversation view model.
  *
- * Nothing is unwrapped here: an instance is a row in the controller's database
- * rather than a custom resource, so there is no `StructuredObject` in the way —
- * this is a rename and a pair of enum conversions, and that is the whole job.
+ * Validate source provenance once so consumers can rely on it. An instance is a
+ * database row, so there is no custom-resource envelope to unwrap.
  *
  * The `?? "unknown"` on each enum is not dead code, however much the types make it
  * look so. The generated enum describes the proto this build was compiled against;
@@ -571,16 +572,24 @@ const INSTANCE_OPERATION_BY_ENUM: Record<
  * state instead of an empty cell.
  */
 function toAgentInstance(instance: PbSession): AgentInstance {
+  const source = required(instance.source.value, "SessionService", "Session source");
+  const ref = required(source.ref, "SessionService", "Session source reference");
+  const namespace = required(orUndefined(ref.namespace), "SessionService", "Session source namespace");
+  const name = required(orUndefined(ref.name), "SessionService", "Session source name");
+  const uid = required(orUndefined(source.uid), "SessionService", "Session source UID");
   return {
     id: instance.id,
     contextId: instance.contextId,
-    // Carried through as it arrives, empty included: empty means unnamed, which is
-    // a state the controller writes deliberately and every row predating the column
-    // is in. Turning it into `undefined` here would make every caller handle two
-    // spellings of the same fact.
+    // Empty means unnamed, so preserve it instead of introducing a second spelling.
     name: instance.name,
     creator: instance.creator,
-    agent: orUndefined(refToString(instance.agent)),
+    source: {
+      kind: instance.source.case === "agent" ? "Agent" : "ScheduledRun",
+      namespace,
+      name,
+      uid,
+      ...(instance.source.case === "scheduledRun" ? { executionId: orUndefined(instance.source.value.executionId) } : {}),
+    },
     preparedRevision: orUndefined(instance.preparedRevision),
     a2aAuthority: orUndefined(instance.a2aAuthority),
     state: INSTANCE_STATE_BY_ENUM[instance.state] ?? "unknown",
@@ -864,7 +873,7 @@ const agentInstances: Pick<
    */
   "agentInstances.fork": async (input, options) => {
     const source = await agentInstances["agentInstances.get"]({ id: input.id }, options);
-    const agent = required(source.agent, "SessionService/GetSession", "agent reference");
+    const agent = sessionTenant(source.source);
     const history = await getChatClient().history({ id: input.id, agent }, options);
     const expectedHeadTaskId = history.messages.at(-1)?.taskId;
     if (!expectedHeadTaskId) throw new ApiError("There is no completed turn to fork.", { kind: "http", url: "CheckpointService/CreateCheckpoint", status: 400 });
@@ -1377,23 +1386,23 @@ export const defaultOperations: ApiOperations = {
   ...cluster,
   "scheduledRuns.list": async (input, options) => rpc("ListScheduledRuns", options.signal, async () => {
     const response = await serviceClient(ScheduledRunService).listScheduledRuns(input, call("scheduledRuns.list", options));
-    return { ...response, scheduledRuns: list(response.scheduledRuns) };
+    return { ...response, scheduledRuns: list(response.scheduledRuns).map(row => unwrap<ScheduledRun>(row.resource, "ListScheduledRuns", "ScheduledRun")) };
   }),
   "scheduledRuns.get": async (input, options) => rpc("GetScheduledRun", options.signal, async () => {
     const response = await serviceClient(ScheduledRunService).getScheduledRun(input, call("scheduledRuns.get", options));
-    return { ...response, scheduledRun: required(response.scheduledRun, "GetScheduledRun", "scheduledRun") };
+    return { ...response, scheduledRun: unwrap<ScheduledRun>(response.scheduledRun?.resource, "GetScheduledRun", "ScheduledRun") };
   }),
   "scheduledRuns.create": async (input, options) => rpc("CreateScheduledRun", options.signal, async () => {
-    const response = await serviceClient(ScheduledRunService).createScheduledRun(input, call("scheduledRuns.create", options));
-    return { ...response, scheduledRun: required(response.scheduledRun, "CreateScheduledRun", "scheduledRun") };
+    const response = await serviceClient(ScheduledRunService).createScheduledRun({ ref: input.ref, resource: wrap("ScheduledRun", input.resource) }, call("scheduledRuns.create", options));
+    return { ...response, scheduledRun: unwrap<ScheduledRun>(response.scheduledRun?.resource, "CreateScheduledRun", "ScheduledRun") };
   }),
   "scheduledRuns.update": async (input, options) => rpc("UpdateScheduledRun", options.signal, async () => {
-    const response = await serviceClient(ScheduledRunService).updateScheduledRun(input, call("scheduledRuns.update", options));
-    return { ...response, scheduledRun: required(response.scheduledRun, "UpdateScheduledRun", "scheduledRun") };
+    const response = await serviceClient(ScheduledRunService).updateScheduledRun({ ref: input.ref, resource: wrap("ScheduledRun", input.resource) }, call("scheduledRuns.update", options));
+    return { ...response, scheduledRun: unwrap<ScheduledRun>(response.scheduledRun?.resource, "UpdateScheduledRun", "ScheduledRun") };
   }),
   "scheduledRuns.delete": async (input, options) => rpc("DeleteScheduledRun", options.signal, async () => {
     const response = await serviceClient(ScheduledRunService).deleteScheduledRun(input, call("scheduledRuns.delete", options));
-    return { ...response, scheduledRun: required(response.scheduledRun, "DeleteScheduledRun", "scheduledRun") };
+    return response;
   }),
   "scheduledRuns.trigger": async (input, options) => rpc("TriggerScheduledRun", options.signal, async () => {
     const response = await serviceClient(ScheduledRunService).triggerScheduledRun(input, call("scheduledRuns.trigger", options));

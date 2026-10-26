@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	configv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/config/v1"
 	"github.com/kagent-dev/kagent/go/api/v1alpha3"
 )
@@ -99,44 +100,38 @@ func NewCompiler(ctx krt.HandlerContext, collections Collections, harnessCompile
 
 // CompileAgent resolves inline or referenced behavior with its referenced
 // platform-managed Harness.
-func (c *Compiler) CompileAgent(ctx context.Context, agent *v1alpha3.Agent) (*CompileResult, error) {
-	if (agent.Spec.Template.Inline == nil) == (agent.Spec.Template.Ref == nil) {
-		return nil, NewValidationError("Agent template requires exactly one of inline or ref")
+func (c *Compiler) CompileAgent(ctx context.Context, source definition.Source, spec v1alpha3.AgentSpec) (*CompileResult, error) {
+	if err := definition.ValidateSpec(spec); err != nil {
+		return nil, NewValidationError("%s", err)
 	}
-	if agent.Spec.Template.Ref != nil && agent.Spec.Template.Ref.Name == "" {
-		return nil, NewValidationError("Agent template ref.name must not be empty")
-	}
-	if agent.Spec.HarnessRef.Name == "" {
-		return nil, NewValidationError("Agent harnessRef.name must not be empty")
-	}
+
 	var template *TemplateConfiguration
-	if agent.Spec.Template.Inline != nil {
-		template = &TemplateConfiguration{Name: agent.Name, Namespace: agent.Namespace, Spec: *agent.Spec.Template.Inline.DeepCopy()}
+	if spec.Template.Inline != nil {
+		template = &TemplateConfiguration{Name: source.Name, Namespace: source.Namespace, Spec: *spec.Template.Inline.DeepCopy()}
 	} else {
-		key := types.NamespacedName{Namespace: agent.Namespace, Name: agent.Spec.Template.Ref.Name}
+		key := types.NamespacedName{Namespace: source.Namespace, Name: spec.Template.Ref.Name}
 		found := krt.FetchOne(c.ctx, c.collections.AgentTemplates, krt.FilterObjectName(key))
 		if found == nil {
 			return nil, fmt.Errorf("resolve AgentTemplate %q: not found", key)
 		}
 		template = templateConfiguration(*found)
 	}
-	harnessKey := types.NamespacedName{Namespace: agent.Namespace, Name: agent.Spec.HarnessRef.Name}
+	harnessKey := types.NamespacedName{Namespace: source.Namespace, Name: spec.HarnessRef.Name}
 	foundHarness := krt.FetchOne(c.ctx, c.collections.Harnesses, krt.FilterObjectName(harnessKey))
 	if foundHarness == nil {
 		return nil, fmt.Errorf("resolve Harness %q: not found", harnessKey)
 	}
 	harness := harnessConfiguration(*foundHarness)
-	result, err := c.compileConfiguration(ctx, agent, harness, template)
+	result, err := c.compileConfiguration(ctx, source, harness, template)
 	if err != nil {
 		return nil, err
 	}
-	result.AgentUID = string(agent.UID)
+	result.Source = source
 	result.Provenance, err = json.Marshal(struct {
-		AgentName string             `json:"agentName"`
-		AgentUID  string             `json:"agentUID"`
-		Spec      v1alpha3.AgentSpec `json:"spec"`
-		Inputs    json.RawMessage    `json:"inputs"`
-	}{agent.Name, string(agent.UID), agent.Spec, result.Provenance})
+		Source definition.Source  `json:"source"`
+		Spec   v1alpha3.AgentSpec `json:"spec"`
+		Inputs json.RawMessage    `json:"inputs"`
+	}{source, spec, result.Provenance})
 	if err != nil {
 		return nil, fmt.Errorf("encode Agent provenance: %w", err)
 	}
@@ -145,7 +140,7 @@ func (c *Compiler) CompileAgent(ctx context.Context, agent *v1alpha3.Agent) (*Co
 
 // compileConfiguration resolves inputs and compiles configuration for the Agent.
 // The Agent name owns runtime identity; template and Harness names are provenance.
-func (c *Compiler) compileConfiguration(ctx context.Context, agent *v1alpha3.Agent, harness *HarnessConfiguration, template *TemplateConfiguration) (*CompileResult, error) {
+func (c *Compiler) compileConfiguration(ctx context.Context, source definition.Source, harness *HarnessConfiguration, template *TemplateConfiguration) (*CompileResult, error) {
 	harnessCompiler := c.harnessCompilers[harnessType(harness)]
 	if harnessCompiler == nil {
 		return nil, NewValidationError("Harness runtime is not supported by any compiler")
@@ -158,7 +153,7 @@ func (c *Compiler) compileConfiguration(ctx context.Context, agent *v1alpha3.Age
 	if err != nil {
 		return nil, err
 	}
-	input.AgentName = agent.Name
+	input.AgentName = source.Name
 	image, err := harnessImage(harness, c.images)
 	if err != nil {
 		return nil, err
@@ -172,7 +167,7 @@ func (c *Compiler) compileConfiguration(ctx context.Context, agent *v1alpha3.Age
 	if workerPool == nil {
 		return nil, &WorkerPoolNotFoundError{WorkerPool: workerKey}
 	}
-	result.AgentName = agent.Name
+	result.Source = source
 	result.Image = image
 	result.CPU = c.settings.GetCpu()
 	result.Memory = c.settings.GetMemory()

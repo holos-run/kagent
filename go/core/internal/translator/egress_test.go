@@ -92,7 +92,7 @@ func TestAgentEgressPoliciesDoNotChangeRuntimeAcrossHarnesses(t *testing.T) {
 			agent := inlineAgent(harness, template)
 			agent.Spec.EgressPolicyRefs = []corev1.LocalObjectReference{{Name: policy.Name}}
 			compile := func() *translator.CompileResult {
-				result, err := compiler(t, model, harness, policy, secret).CompileAgent(t.Context(), agent)
+				result, err := compileAgent(compiler(t, model, harness, policy, secret), t.Context(), agent)
 				require.NoError(t, err)
 				return result
 			}
@@ -135,7 +135,7 @@ func TestAgentEgressPoliciesDoNotChangeRuntimeAcrossHarnesses(t *testing.T) {
 			auth.SecretKeyRef.Key = "alternate"
 			secret.Data["alternate"] = []byte("different-token")
 			model.Spec.APIKeySecret, model.Spec.APIKeySecretKey = secret.Name, "token"
-			_, err = compiler(t, model, harness, policy, secret).CompileAgent(t.Context(), agent)
+			_, err = compileAgent(compiler(t, model, harness, policy, secret), t.Context(), agent)
 			require.NoError(t, err)
 			withConflict, err := compile().Digest()
 			require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestAgentEgressPoliciesDoNotChangeRuntimeAcrossHarnesses(t *testing.T) {
 			}
 			model.Spec.APIKeySecret, model.Spec.APIKeySecretKey = "", ""
 			model.Spec.TokenPassthrough = new(true)
-			_, err = compiler(t, model, harness, policy, secret).CompileAgent(t.Context(), agent)
+			_, err = compileAgent(compiler(t, model, harness, policy, secret), t.Context(), agent)
 			require.NoError(t, err)
 		})
 	}

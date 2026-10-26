@@ -13,6 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	adka2a "github.com/kagent-dev/kagent/go/adk/pkg/a2a"
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	"github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/a2a"
@@ -156,7 +157,8 @@ func (h *Handler) invoke(ctx context.Context, input InvokeSessionInput, async bo
 	}
 	message.ContextID = session.GetId()
 	// Direct gateway calls carry the Agent tenant on the request, like A2A transports do.
-	tenant := session.GetAgent().GetNamespace() + "/" + session.GetAgent().GetName()
+	source := definition.FromSession(session)
+	tenant := source.Reference().Tenant()
 	routed := interactionContext(ctx)
 	var taskID a2atype.TaskID
 	for event, err := range h.gateway.SendStreamingMessage(routed, &a2atype.SendMessageRequest{Tenant: tenant, Message: message}) {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/pgvector/pgvector-go"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
 	"github.com/kagent-dev/kagent/go/core/internal/runtimeauth"
 	"github.com/kagent-dev/kagent/go/core/internal/service/serviceerrors"
@@ -219,7 +220,7 @@ func (s *Service) managementScope(ctx context.Context, verb auth.Verb, agentName
 	return s.scope(ctx, verb)
 }
 
-// scope binds memory to the persisted session's agent and owner. Request fields
+// scope binds memory to the persisted session's source and creator. Request fields
 // and forwarded headers never select another identity's memory namespace.
 func (s *Service) scope(ctx context.Context, verb auth.Verb) (string, string, error) {
 	if s.store == nil {
@@ -229,10 +230,11 @@ func (s *Service) scope(ctx context.Context, verb auth.Verb) (string, string, er
 	if err != nil {
 		return "", "", err
 	}
-	if session.GetAgent().GetNamespace() == "" || session.GetAgent().GetName() == "" || session.Creator == "" {
+	source := definition.FromSession(session)
+	if source.Namespace == "" || source.Name == "" || session.Creator == "" {
 		return "", "", serviceerrors.NewPermissionDenied("actor has no memory scope", nil)
 	}
-	agentName := session.Agent.Namespace + "/" + session.Agent.Name
+	agentName := source.Key()
 	return agentName, session.Creator, s.authorize(ctx, verb, agentName)
 }
 

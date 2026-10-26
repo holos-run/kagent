@@ -33,10 +33,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
-	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/kagent-dev/kagent/go/adk/pkg/controllerclient"
 	runtimetaskstore "github.com/kagent-dev/kagent/go/adk/pkg/taskstore"
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	runtimev1 "github.com/kagent-dev/kagent/go/api/gen/kagent/runtime/v1"
 	"github.com/kagent-dev/kagent/go/core/internal/a2agateway"
@@ -191,7 +191,7 @@ func TestRuntimeTaskStoreThroughGRPC(t *testing.T) {
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 	_, err = controller.MemoryService().List(authenticated, &runtimev1.MemoryServiceListRequest{AgentName: "forged/agent"})
 	require.NoError(t, err)
-	require.Equal(t, session.Agent.Namespace+"/"+session.Agent.Name, memories.agentName)
+	require.Equal(t, "Agent/team-a/assistant", memories.agentName)
 	require.Equal(t, session.Creator, memories.userID)
 	_, err = private.GetTask(authenticated, &runtimev1.TaskStoreServiceGetTaskRequest{SessionId: uuid.NewString(), TaskId: "absent"})
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -287,7 +287,7 @@ func TestRuntimeTaskStoreThroughGRPC(t *testing.T) {
 	var httpTransport a2aclient.Transport
 	for i := range gateways {
 		publicListener := bufconn.Listen(DefaultMaxMessageSize)
-		interactions := sessionsvc.NewInteractionService(store, nil, sessionsvc.NewService(store, &auth.NoopAuthorizer{}, nil), true)
+		interactions := sessionsvc.NewInteractionService(store, nil, nil, sessionsvc.NewService(store, &auth.NoopAuthorizer{}, nil), true)
 		gateway := a2agateway.New(interactions, taskStoreRuntimeDialer{runtimeListener}, "http://gateway.test")
 		public, err := New(Config{
 			Listener: publicListener, SystemService: testSystemService(),
@@ -443,14 +443,14 @@ func TestRuntimeTaskStoreThroughGRPC(t *testing.T) {
 	storedConfigs, err := store.ListTaskPushConfigs(t.Context(), id, parkedID, "", 10)
 	require.NoError(t, err)
 	require.Len(t, storedConfigs, 2, "stored configs: %+v", storedConfigs)
-	managedService := sessionsvc.NewInteractionService(store, nil, sessionsvc.NewService(store, &auth.NoopAuthorizer{}, nil), true)
+	managedService := sessionsvc.NewInteractionService(store, nil, nil, sessionsvc.NewService(store, &auth.NoopAuthorizer{}, nil), true)
 	serviceCtx := auth.AuthSessionTo(publicCtx, &authimpl.SimpleSession{P: auth.Principal{ID: "alice"}})
-	servicePage, err := managedService.ListTaskPushConfigs(serviceCtx, types.NamespacedName{Namespace: "team-a", Name: "assistant"},
+	servicePage, err := managedService.ListTaskPushConfigs(serviceCtx, definition.Reference{Kind: definition.Agent, Namespace: "team-a", Name: "assistant"},
 		&a2a.ListTaskPushConfigRequest{TaskID: a2a.TaskID(parkedID), PageSize: 1})
 	require.NoError(t, err)
 	require.Len(t, servicePage.Configs, 1)
 	require.NotEmpty(t, servicePage.NextPageToken)
-	serviceNext, err := managedService.ListTaskPushConfigs(serviceCtx, types.NamespacedName{Namespace: "team-a", Name: "assistant"},
+	serviceNext, err := managedService.ListTaskPushConfigs(serviceCtx, definition.Reference{Kind: definition.Agent, Namespace: "team-a", Name: "assistant"},
 		&a2a.ListTaskPushConfigRequest{TaskID: a2a.TaskID(parkedID), PageSize: 1, PageToken: servicePage.NextPageToken})
 	require.NoError(t, err)
 	require.Len(t, serviceNext.Configs, 1)
@@ -692,22 +692,16 @@ func TestRuntimeTaskStoreThroughGRPC(t *testing.T) {
 // pins, authority and actor identity invariants as a real runtime session.
 func createTaskStoreSession(t *testing.T, store *database.Client) *apiv1.Session {
 	t.Helper()
-	revision := database.RuntimeRevision{
-		Revision: "revision-1", Namespace: "team-a", AgentName: "assistant", AgentUID: "template-uid",
+	revision := database.RuntimeRevision{Source: definition.Source{Kind: definition.Agent, Namespace: "team-a", Name: "assistant", UID: "template-uid"}, Revision: "revision-1",
 		SourceSnapshot: []byte("{}"),
 		AgentCard:      &a2apb.AgentCard{Name: "assistant"}, EgressDestinations: []string{},
 		ActorTemplateAtespace: "team-a", ActorTemplateName: "assistant-kagent-revision", ActorTemplateUID: "actor-template-uid",
 	}
-	upsertErr := store.UpsertAgentDefinition(t.Context(), database.AgentDefinition{
-		Namespace: revision.Namespace, AgentName: revision.AgentName, AgentUID: revision.AgentUID,
-		DesiredRevision: revision.Revision,
-	})
+	upsertErr := store.UpsertAgentDefinition(t.Context(), database.AgentDefinition{Source: definition.Source{Kind: definition.Agent, Namespace: revision.Namespace, Name: revision.Name, UID: revision.UID}, DesiredRevision: revision.Revision})
 	require.NoError(t, upsertErr)
 	require.NoError(t, store.RecordRuntimeRevision(t.Context(), revision, database.RecordRevisionOptions{Ready: true}))
 	session, _, err := store.CreateSession(t.Context(), &apiv1.Session{
-		Id: uuid.NewString(), Creator: "alice",
-
-		Agent: &apiv1.ResourceReference{Namespace: "team-a", Name: "assistant"},
+		Id: uuid.NewString(), Creator: "alice", Source: &apiv1.Session_Agent{Agent: &apiv1.AgentProvenance{Ref: &apiv1.ResourceReference{Namespace: "team-a", Name: "assistant"}}},
 	}, uuid.NewString())
 	require.NoError(t, err)
 	operation, err := store.BeginSessionOperation(t.Context(), session.Id, apiv1.RuntimeOperation_RUNTIME_OPERATION_CREATE)

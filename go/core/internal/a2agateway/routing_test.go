@@ -54,7 +54,7 @@ func newTestSessions(store *gatewayTestStore, authorizer auth.Authorizer) *sessi
 }
 
 func newTestGateway(store *gatewayTestStore, authorizer auth.Authorizer, dialer *gatewayTestDialer, url string) a2asrv.RequestHandler {
-	interactions := sessionsvc.NewInteractionService(store, gatewayTestAgents{store, authorizer}, newTestSessions(store, authorizer), false)
+	interactions := sessionsvc.NewInteractionService(store, gatewayTestAgents{store, authorizer}, gatewayTestSchedules{store, authorizer}, newTestSessions(store, authorizer), false)
 	return New(interactions, dialer, url)
 }
 
@@ -130,4 +130,17 @@ func TestListWithoutContextRestrictsShareToOneConversation(t *testing.T) {
 	_, err := gateway.ListTasks(ctx, &a2a.ListTasksRequest{Tenant: gatewayTestAgent})
 	require.NoError(t, err)
 	require.Equal(t, []string{gatewayTestID}, store.listedIDs)
+}
+
+type gatewayTestSchedules struct {
+	store      *gatewayTestStore
+	authorizer auth.Authorizer
+}
+
+func (s gatewayTestSchedules) Get(ctx context.Context, ref types.NamespacedName) (*v1alpha3.ScheduledRun, error) {
+	caller, _ := auth.AuthSessionFrom(ctx)
+	if err := s.authorizer.Check(ctx, caller.Principal(), auth.VerbGet, auth.Resource{Type: "ScheduledRun", Namespace: ref.Namespace, Name: ref.Name}); err != nil {
+		return nil, serviceerrors.NewPermissionDenied("not authorized", err)
+	}
+	return &v1alpha3.ScheduledRun{ObjectMeta: metav1.ObjectMeta{Namespace: ref.Namespace, Name: ref.Name, UID: "schedule-uid"}}, nil
 }

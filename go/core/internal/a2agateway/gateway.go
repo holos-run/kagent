@@ -11,28 +11,28 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aext"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/uuid"
-	"k8s.io/apimachinery/pkg/types"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	sessionsvc "github.com/kagent-dev/kagent/go/core/internal/service/session"
 )
 
 type interactionService interface {
-	GetTask(context.Context, types.NamespacedName, *a2a.GetTaskRequest) (*a2a.Task, error)
-	ListTasks(context.Context, types.NamespacedName, *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error)
-	PrepareSend(context.Context, types.NamespacedName, *a2a.SendMessageRequest) (*sessionsvc.PreparedSend, error)
-	PrepareCancelTask(context.Context, types.NamespacedName, *a2a.CancelTaskRequest) (*apiv1.Session, *a2a.Task, error)
-	PrepareTaskSubscription(context.Context, types.NamespacedName, *a2a.SubscribeToTaskRequest) (*apiv1.Session, *a2a.Task, error)
-	RevokeSend(context.Context, types.NamespacedName, *a2a.Message, uuid.UUID) (bool, error)
-	GetTaskByMessage(context.Context, types.NamespacedName, *a2a.Message) (*a2a.Task, error)
-	GetSendResult(context.Context, types.NamespacedName, *a2a.Message, a2a.TaskID, *int) (*a2a.Task, error)
-	GetCancelResult(context.Context, types.NamespacedName, a2a.TaskID) (*a2a.Task, error)
-	GetSettledTask(context.Context, types.NamespacedName, string, a2a.TaskID, *int) (*a2a.Task, error)
-	GetAgentCard(context.Context, types.NamespacedName) (*a2a.AgentCard, error)
-	CreateTaskPushConfig(context.Context, types.NamespacedName, *a2a.PushConfig) (*a2a.PushConfig, error)
-	GetTaskPushConfig(context.Context, types.NamespacedName, *a2a.GetTaskPushConfigRequest) (*a2a.PushConfig, error)
-	ListTaskPushConfigs(context.Context, types.NamespacedName, *a2a.ListTaskPushConfigRequest) (*a2a.ListTaskPushConfigResponse, error)
-	DeleteTaskPushConfig(context.Context, types.NamespacedName, *a2a.DeleteTaskPushConfigRequest) error
+	GetTask(context.Context, definition.Reference, *a2a.GetTaskRequest) (*a2a.Task, error)
+	ListTasks(context.Context, definition.Reference, *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error)
+	PrepareSend(context.Context, definition.Reference, *a2a.SendMessageRequest) (*sessionsvc.PreparedSend, error)
+	PrepareCancelTask(context.Context, definition.Reference, *a2a.CancelTaskRequest) (*apiv1.Session, *a2a.Task, error)
+	PrepareTaskSubscription(context.Context, definition.Reference, *a2a.SubscribeToTaskRequest) (*apiv1.Session, *a2a.Task, error)
+	RevokeSend(context.Context, definition.Reference, *a2a.Message, uuid.UUID) (bool, error)
+	GetTaskByMessage(context.Context, definition.Reference, *a2a.Message) (*a2a.Task, error)
+	GetSendResult(context.Context, definition.Reference, *a2a.Message, a2a.TaskID, *int) (*a2a.Task, error)
+	GetCancelResult(context.Context, definition.Reference, a2a.TaskID) (*a2a.Task, error)
+	GetSettledTask(context.Context, definition.Reference, string, a2a.TaskID, *int) (*a2a.Task, error)
+	GetAgentCard(context.Context, definition.Reference) (*a2a.AgentCard, error)
+	CreateTaskPushConfig(context.Context, definition.Reference, *a2a.PushConfig) (*a2a.PushConfig, error)
+	GetTaskPushConfig(context.Context, definition.Reference, *a2a.GetTaskPushConfigRequest) (*a2a.PushConfig, error)
+	ListTaskPushConfigs(context.Context, definition.Reference, *a2a.ListTaskPushConfigRequest) (*a2a.ListTaskPushConfigResponse, error)
+	DeleteTaskPushConfig(context.Context, definition.Reference, *a2a.DeleteTaskPushConfigRequest) error
 }
 
 type runtimeDialer interface {
@@ -154,12 +154,12 @@ func (g *Gateway) GetExtendedAgentCard(ctx context.Context, req *a2a.GetExtended
 	// security, and signatures belong to the gateway instead of the private
 	// runtime that produced that card.
 	card.SupportedInterfaces = []*a2a.AgentInterface{
-		a2a.NewAgentInterface(strings.TrimRight(g.gatewayURL, "/")+HTTPPathPrefix+ref.Namespace+"/"+ref.Name, a2a.TransportProtocolJSONRPC),
+		a2a.NewAgentInterface(strings.TrimRight(g.gatewayURL, "/")+HTTPPathPrefix+ref.Tenant(), a2a.TransportProtocolJSONRPC),
 		a2a.NewAgentInterface(g.gatewayURL, a2a.TransportProtocolGRPC),
 	}
 	// HTTP identifies the Agent in its URL; only the shared gRPC endpoint needs
 	// clients to send a tenant.
-	card.SupportedInterfaces[1].Tenant = ref.Namespace + "/" + ref.Name
+	card.SupportedInterfaces[1].Tenant = ref.Tenant()
 	// Extensions are the exception, and replacing the whole capabilities struct
 	// used to drop them. They describe what the runtime behind this gateway can
 	// negotiate — human-in-the-loop among them — which is not the gateway's to

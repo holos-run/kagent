@@ -10,6 +10,7 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/status"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	"github.com/kagent-dev/kagent/go/core/internal/service/checkpoint"
 )
@@ -135,7 +136,7 @@ func checkpointSummary(value *apiv1.Checkpoint) CheckpointSummary {
 func sessionSummary(session *apiv1.Session) SessionSummary {
 	return SessionSummary{
 		ID:    session.GetId(),
-		Agent: session.GetAgent().GetName(),
+		Agent: definition.FromSession(session).Name,
 		State: session.GetState().String(),
 	}
 }

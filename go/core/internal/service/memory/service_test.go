@@ -127,7 +127,7 @@ func TestListDeleteAndStoreErrors(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "memory-1", memories[0].ID)
 	require.NoError(t, service.Delete(memoryContext(t), ""))
-	assert.Equal(t, "team-a/agent", store.deletedAgent)
+	assert.Equal(t, "Agent/team-a/agent", store.deletedAgent)
 	assert.Equal(t, "user", store.deletedUser)
 
 	store.err = errors.New("database unavailable")
@@ -148,7 +148,7 @@ func (store *memoryStore) GetSessionForRuntime(_ context.Context, id, _ string) 
 	if store.bindingErr != nil {
 		return nil, store.bindingErr
 	}
-	return &apiv1.Session{Id: id, Creator: "user", Agent: &apiv1.ResourceReference{Namespace: "team-a", Name: "agent"}, A2AAuthority: substrate.ActorHost("team-a", substrate.ActorName(id), "")}, nil
+	return &apiv1.Session{Id: id, Creator: "user", A2AAuthority: substrate.ActorHost("team-a", substrate.ActorName(id), ""), Source: &apiv1.Session_Agent{Agent: &apiv1.AgentProvenance{Ref: &apiv1.ResourceReference{Namespace: "team-a", Name: "agent"}}}}, nil
 }
 
 type testActorVerifier struct{}
@@ -176,19 +176,19 @@ func TestActorMemoryUsesSessionScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, store.stored, 2)
 	for _, memory := range store.stored {
-		require.Equal(t, "team-a/agent", memory.AgentName)
+		require.Equal(t, "Agent/team-a/agent", memory.AgentName)
 		require.Equal(t, "user", memory.UserID)
 	}
-	require.NoError(t, service.Delete(ctx, "other/agent"))
-	require.Equal(t, "team-a/agent", store.deletedAgent)
+	require.NoError(t, service.Delete(ctx, "Agent/other/agent"))
+	require.Equal(t, "Agent/team-a/agent", store.deletedAgent)
 	require.Equal(t, "user", store.deletedUser)
-	_, err = service.List(ctx, "other/agent")
+	_, err = service.List(ctx, "Agent/other/agent")
 	require.NoError(t, err)
-	require.Equal(t, "team-a/agent", store.readAgent)
+	require.Equal(t, "Agent/team-a/agent", store.readAgent)
 	require.Equal(t, "user", store.readUser)
 	_, err = service.Search(ctx, SearchRequest{Vector: input.Vector})
 	require.NoError(t, err)
-	require.Equal(t, "team-a/agent", store.readAgent)
+	require.Equal(t, "Agent/team-a/agent", store.readAgent)
 	require.Equal(t, "user", store.readUser)
 }
 
@@ -215,9 +215,9 @@ func TestMemoryRejectsUnboundActors(t *testing.T) {
 			require.Equal(t, codes.PermissionDenied, status.Code(err))
 			_, err = service.Search(ctx, SearchRequest{Vector: input.Vector})
 			require.Equal(t, codes.PermissionDenied, status.Code(err))
-			_, err = service.List(ctx, "other/agent")
+			_, err = service.List(ctx, "Agent/other/agent")
 			require.Equal(t, codes.PermissionDenied, status.Code(err))
-			err = service.Delete(ctx, "other/agent")
+			err = service.Delete(ctx, "Agent/other/agent")
 			require.Equal(t, codes.PermissionDenied, status.Code(err))
 			require.Empty(t, store.stored)
 			require.Empty(t, store.deletedAgent)
@@ -230,7 +230,7 @@ func TestUserMemoryManagementDoesNotRequireRuntime(t *testing.T) {
 	service := NewService(store, auth.NoopAuthorizer{})
 	ctx := auth.AuthSessionTo(t.Context(), &authimpl.SimpleSession{P: auth.Principal{ID: "owner"}})
 
-	for _, agentName := range []string{"team-a/agent", "legacy-display-name"} {
+	for _, agentName := range []string{"Agent/team-a/agent", "ScheduledRun/team-a/agent"} {
 		_, err := service.List(ctx, agentName)
 		require.NoError(t, err)
 		require.Equal(t, agentName, store.readAgent)
@@ -256,9 +256,9 @@ func TestMemoryManagementHonorsConfiguredAuthorization(t *testing.T) {
 	service := NewService(store, deniedMemoryAuthorizer{})
 	user := auth.AuthSessionTo(t.Context(), &authimpl.SimpleSession{P: auth.Principal{ID: "user"}})
 	for _, ctx := range []context.Context{user, memoryContext(t)} {
-		_, err := service.List(ctx, "team-a/agent")
+		_, err := service.List(ctx, "Agent/team-a/agent")
 		require.True(t, serviceerrors.IsCode(err, serviceerrors.CodePermissionDenied))
-		err = service.Delete(ctx, "team-a/agent")
+		err = service.Delete(ctx, "Agent/team-a/agent")
 		require.True(t, serviceerrors.IsCode(err, serviceerrors.CodePermissionDenied))
 	}
 	require.Empty(t, store.deletedAgent)
@@ -284,8 +284,8 @@ func TestMemorySharesNeverReachPartitionStorage(t *testing.T) {
 				_, err := service.Search(shared, SearchRequest{Vector: vector(VectorDimension, 1)})
 				return err
 			}},
-			{"list", func() error { _, err := service.List(shared, "team-a/agent"); return err }},
-			{"delete", func() error { return service.Delete(shared, "team-a/agent") }},
+			{"list", func() error { _, err := service.List(shared, "Agent/team-a/agent"); return err }},
+			{"delete", func() error { return service.Delete(shared, "Agent/team-a/agent") }},
 		}
 		for _, op := range operations {
 			t.Run(op.name, func(t *testing.T) {

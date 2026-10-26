@@ -21,6 +21,7 @@ function instance(overrides: Partial<AgentInstance> = {}): AgentInstance {
     // treating the two as interchangeable.
     name: "",
     creator: "someone",
+    source: { kind: "Agent", namespace: "kagent", name: "assistant", uid: "agent-uid" },
     state: "ready",
     operation: "unspecified",
     createdAt: "2026-08-24T10:00:00Z",

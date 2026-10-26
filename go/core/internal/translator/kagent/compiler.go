@@ -13,6 +13,7 @@ import (
 
 	runtimeconfig "github.com/kagent-dev/kagent/go/adk/pkg/config"
 	apia2a "github.com/kagent-dev/kagent/go/api/a2a"
+	"github.com/kagent-dev/kagent/go/api/definition"
 	configv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/config/v1"
 	"github.com/kagent-dev/kagent/go/core/internal/translator"
 	"github.com/kagent-dev/kagent/go/core/internal/translator/adkconfig"
@@ -71,9 +72,7 @@ func (c *Compiler) Compile(ctx context.Context, input *translator.HarnessInput) 
 	compiled.Egress = append(compiled.Egress, c.settings.GetControlPlaneUrl())
 	slices.Sort(compiled.Egress)
 	compiled.Egress = slices.Compact(compiled.Egress)
-	return &translator.CompileResult{Revision: translator.Revision{
-		Namespace: template.Namespace,
-		Command:   slices.Clone(harness.Spec.Workload.Command), Args: slices.Clone(harness.Spec.Workload.Args),
+	return &translator.CompileResult{Revision: translator.Revision{Source: definition.Source{Kind: definition.Agent, Namespace: template.Namespace}, Command: slices.Clone(harness.Spec.Workload.Command), Args: slices.Clone(harness.Spec.Workload.Args),
 		Environment: environment, ConfigJSON: configJSON, AgentCard: card,
 		SkillImages:    compiled.SkillImages,
 		WorkerPoolName: harness.Spec.Substrate.WorkerPoolRef.Name, SnapshotLocation: harness.Spec.Substrate.SnapshotPolicy.Location,

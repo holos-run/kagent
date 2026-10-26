@@ -49,7 +49,7 @@ func TestCrossNamespaceModelsAndMCP(t *testing.T) {
 			}}
 			secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "auth", Namespace: "shared"}, Data: map[string][]byte{"token": []byte("shared-credential")}}
 			headers := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "headers", Namespace: "shared"}, Data: map[string]string{"tenant": "shared-tenant"}}
-			result, err := compiler(t, model, harness, server, secret, headers).CompileAgent(t.Context(), inlineAgent(harness, template))
+			result, err := compileAgent(compiler(t, model, harness, server, secret, headers), t.Context(), inlineAgent(harness, template))
 			require.NoError(t, err)
 			require.Len(t, result.Credentials, 2)
 			for _, credential := range result.Credentials {
@@ -60,12 +60,12 @@ func TestCrossNamespaceModelsAndMCP(t *testing.T) {
 			require.Contains(t, string(result.Provenance), "shared/tools")
 			require.Contains(t, string(result.Provenance), "shared/default-model")
 			model.Spec.AllowedNamespaces = nil
-			_, err = compiler(t, model, harness, server, secret, headers).CompileAgent(t.Context(), inlineAgent(harness, template))
+			_, err = compileAgent(compiler(t, model, harness, server, secret, headers), t.Context(), inlineAgent(harness, template))
 			require.ErrorContains(t, err, "denied by allowedNamespaces")
 			require.NotContains(t, err.Error(), "auth")
 			model.Spec.AllowedNamespaces = &v1alpha3.AllowedNamespaces{From: v1alpha3.NamespacesFromAll}
 			server.Spec.AllowedNamespaces = nil
-			_, err = compiler(t, model, harness, server, secret, headers).CompileAgent(t.Context(), inlineAgent(harness, template))
+			_, err = compileAgent(compiler(t, model, harness, server, secret, headers), t.Context(), inlineAgent(harness, template))
 			require.ErrorContains(t, err, "denied by allowedNamespaces")
 		})
 	}
@@ -123,12 +123,12 @@ func TestAuxiliaryModelReferencesUseHarnessNamespaceAndPolicy(t *testing.T) {
 				harness.Spec.Kagent.Compaction = &v1alpha3.KagentHarnessCompaction{CompactionInterval: new(5), Summarizer: &v1alpha3.KagentHarnessSummarizer{ModelConfigRef: &ref}}
 			}
 			template := &v1alpha3.AgentTemplate{ObjectMeta: metav1.ObjectMeta{Name: "assistant", Namespace: "test"}, Spec: v1alpha3.AgentTemplateSpec{ModelConfig: &v1alpha3.ObjectReference{Name: root.Name}}}
-			result, err := compiler(t, root, shared, harness).CompileAgent(t.Context(), inlineAgent(harness, template))
+			result, err := compileAgent(compiler(t, root, shared, harness), t.Context(), inlineAgent(harness, template))
 			require.NoError(t, err)
 			require.Contains(t, string(result.ConfigJSON), "shared-model", "same-name auxiliary model must not alias the root")
 			require.Contains(t, string(result.Provenance), "shared/default-model")
 			shared.Spec.AllowedNamespaces = nil
-			_, err = compiler(t, root, shared, harness).CompileAgent(t.Context(), inlineAgent(harness, template))
+			_, err = compileAgent(compiler(t, root, shared, harness), t.Context(), inlineAgent(harness, template))
 			require.ErrorContains(t, err, "denied by allowedNamespaces")
 		})
 	}
@@ -185,7 +185,7 @@ func TestReferencePolicyMatrix(t *testing.T) {
 				if test.labels != nil || test.observeError != "" {
 					objects = append(objects, translator.NamespaceObservation{Name: "test", Namespace: &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test", Labels: test.labels}}, Error: test.observeError})
 				}
-				_, err := compiler(t, objects...).CompileAgent(t.Context(), inlineAgent(harness, template))
+				_, err := compileAgent(compiler(t, objects...), t.Context(), inlineAgent(harness, template))
 				if test.allowed {
 					require.NoError(t, err)
 				} else {
@@ -226,7 +226,7 @@ func TestRepeatedMCPBindings(t *testing.T) {
 				{MCP: &v1alpha3.MCPToolBinding{Server: ref, Tools: []string{"read_file"}}},
 				{MCP: &v1alpha3.MCPToolBinding{Server: ref, Tools: []string{"write_file"}, RequireApproval: true}},
 			}}}
-			result, err := compiler(t, model, harness, server, secret).CompileAgent(t.Context(), inlineAgent(harness, template))
+			result, err := compileAgent(compiler(t, model, harness, server, secret), t.Context(), inlineAgent(harness, template))
 			if kind == "codex" || kind == "claude" {
 				require.ErrorContains(t, err, "same native name")
 				return

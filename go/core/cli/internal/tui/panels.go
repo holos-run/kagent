@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	sessionview "github.com/kagent-dev/kagent/go/core/cli/internal/tui/session"
 	"github.com/kagent-dev/kagent/go/core/cli/internal/tui/theme"
@@ -122,10 +123,19 @@ type sessionItem struct {
 	*apiv1.Session
 }
 
+// sessionSourceName distinguishes schedule-owned behavior in the source picker.
+func sessionSourceName(session *apiv1.Session) string {
+	source := definition.FromSession(session)
+	if source.Kind == definition.ScheduledRun {
+		return string(source.Kind) + "/" + source.Name
+	}
+	return source.Name
+}
+
 // FilterValue lets `/` match on template, ID prefix, or state.
 func (i sessionItem) FilterValue() string {
 	return strings.Join([]string{
-		i.GetAgent().GetName(),
+		sessionSourceName(i.Session),
 		i.GetId(),
 		sessionview.StateLabel(i.GetState()),
 	}, " ")
@@ -204,7 +214,7 @@ func sessionRow(item list.Item, width int) string {
 	}
 	glyph, colour := stateGlyph(row.GetState())
 	shortID := sessionview.ShortID(row.GetId())
-	name := truncate(row.GetAgent().GetName(), max(width-len(shortID)-4, 1))
+	name := truncate(sessionSourceName(row.Session), max(width-len(shortID)-4, 1))
 	return fmt.Sprintf("%s %s %s",
 		lipgloss.NewStyle().Foreground(colour).Render(glyph),
 		pad(name, max(width-len(shortID)-4, 1)),

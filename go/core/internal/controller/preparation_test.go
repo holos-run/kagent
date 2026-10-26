@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kagentfake "github.com/kagent-dev/kagent/go/api/clientset/versioned/fake"
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	kagentv1alpha3 "github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
@@ -109,8 +110,7 @@ func TestUnresolvedPoolReleasesAbandonedRevision(t *testing.T) {
 			require.Nil(t, retained, "last-successful A must remain protected without any sessions")
 
 			fresh, _, err := store.CreateSession(ctx, &apiv1.Session{
-				Id: uuid.NewString(), Creator: "alice",
-				Agent: &apiv1.ResourceReference{Namespace: "team-a", Name: "assistant"},
+				Id: uuid.NewString(), Creator: "alice", Source: &apiv1.Session_Agent{Agent: &apiv1.AgentProvenance{Ref: &apiv1.ResourceReference{Namespace: "team-a", Name: "assistant"}}},
 			}, "last-good-session")
 			require.NoError(t, err, "unresolved edits must leave the last successful revision available")
 			require.Equal(t, initial.Target.RevisionID.String(), fresh.PreparedRevision)
@@ -154,7 +154,7 @@ func TestPreparationErrorsPublishStatusAndRecover(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			collections, _ := newPreparationTestCollections(t, "microvm")
 			initial := collections.Reconciliations.List()[0]
-			statusClient := kagentfake.NewSimpleClientset(initial.Agent.DeepCopy()).ApiV1alpha3()
+			statusClient := kagentfake.NewSimpleClientset((*collections.Agents.GetKey(initial.Source.Namespace + "/" + initial.Source.Name)).DeepCopy()).ApiV1alpha3()
 			reconciler := &Reconciler{collections: collections, templates: &test.templates, store: &test.store, status: statusClient}
 			err := reconciler.reconcileAgent(t.Context(), initial.ResourceName())
 			require.Error(t, err)
@@ -250,7 +250,7 @@ func TestPreparationQueueAndPollerBackoff(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				collections, _ := newPreparationTestCollections(t, "microvm")
 				initial := collections.Reconciliations.List()[0]
-				statusClient := kagentfake.NewSimpleClientset(initial.Agent.DeepCopy()).ApiV1alpha3()
+				statusClient := kagentfake.NewSimpleClientset((*collections.Agents.GetKey(initial.Source.Namespace + "/" + initial.Source.Name)).DeepCopy()).ApiV1alpha3()
 				backend := &preparationTestBackend{templates: &test.templates, store: &test.store}
 				r := newReconciler(collections, backend, backend, statusClient)
 				ctx, cancel := context.WithCancel(t.Context())
@@ -304,7 +304,7 @@ func TestPreparationQueueAndPollerBackoff(t *testing.T) {
 					require.True(t, test.store.markedSuccessful, "polling must still observe pending golden snapshots")
 					before = test.store.pairCalls
 				})
-				published, err := statusClient.Agents(initial.Agent.Namespace).Get(t.Context(), initial.Agent.Name, metav1.GetOptions{})
+				published, err := statusClient.Agents(initial.Source.Namespace).Get(t.Context(), initial.Source.Name, metav1.GetOptions{})
 				require.NoError(t, err)
 				require.True(t, apimeta.IsStatusConditionTrue(published.Status.Conditions, kagentv1alpha3.AgentConditionReady))
 				time.Sleep(time.Minute)
@@ -373,10 +373,10 @@ func (p *preparationTestBackend) RecordRuntimeRevision(ctx context.Context, revi
 	return p.store.RecordRuntimeRevision(ctx, revision, options)
 }
 
-func (p *preparationTestBackend) RetireAgentIdentities(ctx context.Context, namespace, name string) error {
+func (p *preparationTestBackend) RetireAgentIdentities(ctx context.Context, kind definition.Kind, namespace, name string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.store.RetireAgentIdentities(ctx, namespace, name)
+	return p.store.RetireAgentIdentities(ctx, kind, namespace, name)
 }
 
 func TestPreparationDesiredChangesBypassBackoff(t *testing.T) {
@@ -385,7 +385,7 @@ func TestPreparationDesiredChangesBypassBackoff(t *testing.T) {
 		initial := collections.Reconciliations.List()[0]
 		templates := &fakeActorTemplates{createErr: status.Error(codes.FailedPrecondition, "missing config")}
 		store := &fakeRuntimeRevisionStore{}
-		r := newReconciler(collections, templates, store, kagentfake.NewSimpleClientset(initial.Agent.DeepCopy()).ApiV1alpha3())
+		r := newReconciler(collections, templates, store, kagentfake.NewSimpleClientset((*collections.Agents.GetKey(initial.Source.Namespace + "/" + initial.Source.Name)).DeepCopy()).ApiV1alpha3())
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		go func() { assert.NoError(t, r.Start(ctx)) }()
@@ -393,7 +393,7 @@ func TestPreparationDesiredChangesBypassBackoff(t *testing.T) {
 		time.Sleep(10 * time.Second)
 		synctest.Wait()
 		require.Equal(t, 4, store.pairCalls)
-		published, err := r.status.Agents(initial.Agent.Namespace).Get(t.Context(), initial.Agent.Name, metav1.GetOptions{})
+		published, err := r.status.Agents(initial.Source.Namespace).Get(t.Context(), initial.Source.Name, metav1.GetOptions{})
 		require.NoError(t, err)
 		agents := collections.Agents.(krt.StaticCollection[*kagentv1alpha3.Agent])
 		agents.UpdateObject(published)
@@ -412,7 +412,7 @@ func TestPreparationDesiredChangesBypassBackoff(t *testing.T) {
 		synctest.Wait()
 		require.Empty(t, store.pair.DesiredRevision, "unresolved inputs must clear the desired runtime immediately")
 		require.Empty(t, collections.AgentRuntimeObservations.List())
-		agents.DeleteObject(initial.ResourceName())
+		agents.DeleteObject(initial.Source.Namespace + "/" + initial.Source.Name)
 		synctest.Wait()
 		require.Equal(t, initial.ResourceName(), store.retired, "deletion must retire the Agent immediately")
 		cancel()
@@ -438,7 +438,7 @@ func TestPreparationTerminalFailures(t *testing.T) {
 					templates.template.Status = &ateapipb.ActorTemplateStatus{GoldenSnapshotStatus: &ateapipb.GoldenSnapshotStatus{ErrorMessage: "snapshot failed"}}
 				}
 				store := &fakeRuntimeRevisionStore{}
-				statusClient := kagentfake.NewSimpleClientset(initial.Agent.DeepCopy()).ApiV1alpha3()
+				statusClient := kagentfake.NewSimpleClientset((*collections.Agents.GetKey(initial.Source.Namespace + "/" + initial.Source.Name)).DeepCopy()).ApiV1alpha3()
 				r := newReconciler(collections, templates, store, statusClient)
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
@@ -449,7 +449,7 @@ func TestPreparationTerminalFailures(t *testing.T) {
 				require.Nil(t, state.CompilationFailure)
 				require.NotNil(t, state.Target)
 				require.Equal(t, reason, state.PreparationFailure.Reason)
-				published, err := statusClient.Agents(initial.Agent.Namespace).Get(t.Context(), initial.Agent.Name, metav1.GetOptions{})
+				published, err := statusClient.Agents(initial.Source.Namespace).Get(t.Context(), initial.Source.Name, metav1.GetOptions{})
 				require.NoError(t, err)
 				ready := apimeta.FindStatusCondition(published.Status.Conditions, kagentv1alpha3.AgentConditionReady)
 				require.Equal(t, reason, ready.Reason)
@@ -548,7 +548,7 @@ func newPreparationTestCollectionsFor(t *testing.T, workerPool string, template 
 		ModelConfigStatuses:      krttest.GetMockCollection[krt.ObjectWithStatus[*kagentv1alpha3.ModelConfig, kagentv1alpha3.ModelConfigStatus]](mock),
 	}
 	collections.Agents = krt.NewStaticCollection(nil, []*kagentv1alpha3.Agent{testAgent(template, runtimeHarness)}, opts.WithName("Agents")...)
-	collections.Reconciliations = newAgentReconciliations(collections.Agents, translator.Collections{
+	collections.Reconciliations = testAgentReconciliations(collections.Agents, translator.Collections{
 		Harnesses: collections.Harnesses, AgentTemplates: collections.AgentTemplates, ResolvedModelConfigs: collections.ResolvedModelConfigs,
 		RemoteMCPServers: collections.RemoteMCPServers, ConfigMaps: collections.ConfigMaps,
 		Secrets: collections.Secrets, WorkerPools: collections.WorkerPools, EgressPolicies: collections.EgressPolicies,
@@ -573,8 +573,8 @@ func (p *preparationTestBackend) EnsureActorEgressPolicy(ctx context.Context, at
 	return p.templates.EnsureActorEgressPolicy(ctx, atespace, name, revision)
 }
 
-func (p *preparationTestBackend) GetAgentEgressGrant(ctx context.Context, namespace, uid string) (egress.Access, error) {
+func (p *preparationTestBackend) GetAgentEgressGrant(ctx context.Context, source definition.Source) (egress.Access, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.store.GetAgentEgressGrant(ctx, namespace, uid)
+	return p.store.GetAgentEgressGrant(ctx, source)
 }

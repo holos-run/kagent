@@ -19,6 +19,7 @@ import (
 	a2agrpc "github.com/a2aproject/a2a-go/v2/a2agrpc/v1"
 	a2apb "github.com/a2aproject/a2a-go/v2/a2apb/v1"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -189,7 +190,7 @@ func TestGatewayMissingConversationAcrossTransports(t *testing.T) {
 				require.Equal(t, 1, events)
 				require.Nil(t, dialer.session, "unavailable conversations must not reach the runtime")
 				require.Zero(t, store.reserveCalls)
-				require.False(t, store.unscoped, "session lookup must retain ownership filtering")
+				require.Equal(t, errors.Is(test.storeErr, database.ErrNotFound), store.unscoped, "only missing creator-owned Sessions may fall back to scheduled resource authorization")
 			})
 		}
 	}
@@ -198,6 +199,7 @@ func TestGatewayMissingConversationAcrossTransports(t *testing.T) {
 func TestHTTPAgentURLIsAuthoritative(t *testing.T) {
 	for _, tc := range []struct {
 		name, path, tenant string
+		scheduled          bool
 		want               error
 	}{
 		{name: "URL only", path: gatewayTestAgent},
@@ -206,9 +208,19 @@ func TestHTTPAgentURLIsAuthoritative(t *testing.T) {
 		{name: "conflicting tenant", path: gatewayTestAgent, tenant: "team-a/other", want: a2atype.ErrInvalidRequest},
 		{name: "invalid URL", path: "INVALID/assistant", want: a2atype.ErrInvalidRequest},
 		{name: "Session belongs to another Agent", path: "team-a/other", want: a2atype.ErrUnauthorized},
+		{name: "ScheduledRun URL", path: "ScheduledRun/" + gatewayTestAgent, scheduled: true},
+		{name: "ScheduledRun trailing slash", path: "ScheduledRun/" + gatewayTestAgent + "/", scheduled: true},
+		{name: "ScheduledRun matching tenant", path: "ScheduledRun/" + gatewayTestAgent, tenant: "ScheduledRun/" + gatewayTestAgent, scheduled: true},
+		{name: "Agent URL cannot access same-name ScheduledRun", path: gatewayTestAgent, scheduled: true, want: a2atype.ErrUnauthorized},
+		{name: "ScheduledRun URL cannot access same-name Agent", path: "ScheduledRun/" + gatewayTestAgent, want: a2atype.ErrUnauthorized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &gatewayTestStore{session: gatewayTestSession()}
+			if tc.scheduled {
+				store.session.Source = &apiv1.Session_ScheduledRun{ScheduledRun: &apiv1.ScheduledRunProvenance{
+					Ref: store.session.GetAgent().Ref, Uid: "schedule-uid", ExecutionId: uuid.NewString(),
+				}}
+			}
 			server, runtime := newHTTPTestServer(t, store, &gatewayTestAuthorizer{}, nil)
 			transport := a2aclient.NewJSONRPCTransport(server.URL+HTTPPathPrefix+tc.path, server.Client())
 			t.Cleanup(func() { require.NoError(t, transport.Destroy()) })

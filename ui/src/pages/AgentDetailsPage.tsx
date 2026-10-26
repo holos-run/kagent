@@ -1,3 +1,4 @@
+import { toRef } from "@/api/domain/common";
 import { Alert, Button, Card, Descriptions, Skeleton, Space, Typography } from "antd";
 import type { DescriptionsProps } from "antd";
 import { useTheme } from "@emotion/react";
@@ -15,8 +16,8 @@ import {
 } from "@/components/agent-instances/instanceLabels";
 import { paths } from "@/router/routes";
 import { AgentRail } from "@/components/agent/AgentRail";
-import { agentPageUrl } from "@/components/agent/agentUrl";
-import { bareName, isNotFound, useAgentInstance, useAgentInstances } from "@/api";
+import { instanceSourceUrl } from "@/components/agent/agentUrl";
+import { isNotFound, useAgentInstance, useAgentInstances } from "@/api";
 
 const { Paragraph, Text } = Typography;
 
@@ -56,21 +57,8 @@ export function AgentDetailsPage() {
    */
   const instances = useAgentInstances();
 
-  /*
-   * The agent this conversation belongs to, when the record names an Agent.
-   *
-   * `undefined` is a real answer rather than a missing one: an instance with no
-   * prepared revision belongs to no Agent — the controller's own list query joins it
-   * as NULL — so there is genuinely no agent page to link to, and rendering a link
-   * anyway would point at one that does not exist.
-   */
-  const agentHref =
-    data?.agent
-      ? agentPageUrl({
-          namespace: data.agent.split("/")[0],
-          name: bareName(data.agent),
-        })
-      : undefined;
+  // Provenance identifies the definition even if it has since been deleted.
+  const agentHref = instanceSourceUrl(data);
 
   // A 404 is a different answer from a failed request: the controller told us this
   // instance does not exist — or that it is not ours, which the API reports the same
@@ -98,7 +86,7 @@ export function AgentDetailsPage() {
         },
         {
           key: "agent",
-          label: "Agent",
+          label: data.source.kind === "ScheduledRun" ? "Scheduled run" : "Agent",
           // Full width, and not only because it is the most important field here:
           // antd warns when the spans in a line do not sum to `column`, and that
           // warning fails the browser suite. An odd number of single-span fields is
@@ -110,12 +98,9 @@ export function AgentDetailsPage() {
               data-testid="instance-agent-link"
               css={{ fontFamily: theme.font.mono, color: theme.color.primaryText }}
             >
-              {data.agent}
+              {toRef(data.source.namespace, data.source.name)}
             </Link>
           ) : (
-            // Not a link and not a blank cell: an instance with no prepared revision
-            // belongs to no Agent, which is a fact about the record rather than a
-            // link this page forgot to render.
             <ValueOrNotReported value={undefined} />
           ),
         },

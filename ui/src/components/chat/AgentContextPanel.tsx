@@ -1,8 +1,9 @@
 import { referenceLabel } from "@/api/domain/agentTemplates";
+import { instanceSourceUrl } from "@/components/agent/agentUrl";
 import { Alert, Skeleton, Space, Tag, Typography } from "antd";
 import { useTheme } from "@emotion/react";
 import { Link } from "react-router-dom";
-import { useAgent, useAgentTemplate, bareName, type AgentInstance } from "@/api";
+import { useAgent, useAgentTemplate, type AgentInstance } from "@/api";
 import { buildPath, paths } from "@/router/routes";
 
 const { Text, Paragraph } = Typography;
@@ -31,7 +32,20 @@ const { Text, Paragraph } = Typography;
  * the conversation holds so the two can be told apart, rather than quietly implying
  * they are the same thing.
  */
-export function AgentContextPanel({
+export function AgentContextPanel(props: { instance?: AgentInstance; agentRef?: { namespace: string; name?: string } }) {
+  const source = props.instance?.source;
+  if (source?.kind === "ScheduledRun") {
+    return <Space orientation="vertical" data-testid="chat-agent-context">
+      <Field label="ScheduledRun">
+        <Link to={instanceSourceUrl(props.instance)!}>{source.namespace}/{source.name}</Link>
+      </Field>
+      <Field label="Runtime revision"><Text code>{props.instance?.preparedRevision ?? "Not reported"}</Text></Field>
+    </Space>;
+  }
+  return <AgentResourceContextPanel {...props} />;
+}
+
+function AgentResourceContextPanel({
   instance,
   agentRef,
 }: {
@@ -49,8 +63,8 @@ export function AgentContextPanel({
 }) {
   const theme = useTheme();
 
-  const namespace = instance?.agent?.split("/")[0] ?? agentRef?.namespace ?? "";
-  const name = instance?.agent ? bareName(instance.agent) : agentRef?.name;
+  const namespace = instance?.source.namespace ?? agentRef?.namespace ?? "";
+  const name = instance?.source.name ?? agentRef?.name;
   const definition = useAgent(namespace, name);
   const templateName = definition.data?.resource.spec.template.ref?.name;
   const template = useAgentTemplate(namespace, templateName);

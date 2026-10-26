@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	apia2a "github.com/kagent-dev/kagent/go/api/a2a"
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
 	"github.com/kagent-dev/kagent/go/core/pkg/auth"
@@ -44,6 +45,7 @@ func (gatewayTestAuthSession) Principal() auth.Principal {
 
 type gatewayTestStore struct {
 	*database.Client
+	latestSource     definition.Source
 	pushConfig       *a2atype.PushConfig
 	pushErr          error
 	pushSessionID    string
@@ -111,7 +113,7 @@ func (s *gatewayTestStore) CreateSession(_ context.Context, request *apiv1.Sessi
 		return existing, false, nil
 	}
 	session := gatewayTestSession()
-	session.Id, session.ContextId, session.Agent, session.Creator = request.Id, request.Id, request.Agent, request.Creator
+	session.Id, session.ContextId, session.Source, session.Creator = request.Id, request.Id, request.Source, request.Creator
 	s.created[key], s.session = session, session
 	return session, true, nil
 }
@@ -123,7 +125,7 @@ func (s *gatewayTestStore) ListSessions(_ context.Context, query database.Sessio
 	if s.session == nil || s.session.Id <= query.AfterID {
 		return nil, nil
 	}
-	if query.Agent != nil && (query.Agent.Namespace != s.session.GetAgent().GetNamespace() || query.Agent.Name != s.session.GetAgent().GetName()) {
+	if query.Source != nil && (*query.Source != definition.FromSession(s.session).Reference()) {
 		return nil, nil
 	}
 	return []*apiv1.Session{s.session}, nil
@@ -302,10 +304,10 @@ func gatewayTestSession() *apiv1.Session {
 	return &apiv1.Session{
 		Id: gatewayTestID, ContextId: gatewayTestContextID, Creator: "alice",
 		PreparedRevision: "revision-1",
-		Agent:            &apiv1.ResourceReference{Namespace: "team-a", Name: "assistant"},
-		A2AAuthority:     "private-runtime-authority",
-		State:            apiv1.RuntimeState_RUNTIME_STATE_READY,
-		Operation:        apiv1.RuntimeOperation_RUNTIME_OPERATION_NONE,
+
+		A2AAuthority: "private-runtime-authority",
+		State:        apiv1.RuntimeState_RUNTIME_STATE_READY,
+		Operation:    apiv1.RuntimeOperation_RUNTIME_OPERATION_NONE, Source: &apiv1.Session_Agent{Agent: &apiv1.AgentProvenance{Ref: &apiv1.ResourceReference{Namespace: "team-a", Name: "assistant"}}},
 	}
 }
 
@@ -971,4 +973,29 @@ func TestGatewayUnusedStreamDoesNotReserveDispatch(t *testing.T) {
 	_ = gateway.SendStreamingMessage(gatewayTestContext(), gatewayTestRequest())
 	require.Zero(t, store.reserveCalls)
 	require.Nil(t, dialer.session)
+}
+
+func (s *gatewayTestStore) GetLatestSuccessfulRevision(_ context.Context, source definition.Source) (string, error) {
+	s.latestSource = source
+	return s.revision.Revision, nil
+}
+
+func TestScheduledSourceRoutingAndCard(t *testing.T) {
+	session := gatewayTestSession()
+	session.Source = &apiv1.Session_ScheduledRun{ScheduledRun: &apiv1.ScheduledRunProvenance{Ref: &apiv1.ResourceReference{Namespace: "team-a", Name: "assistant"}, Uid: "schedule-uid", ExecutionId: uuid.NewString()}}
+	store := &gatewayTestStore{session: session, revision: &database.RuntimeRevision{Revision: "schedule-revision", AgentCard: &a2apb.AgentCard{Name: "schedule card", Version: "1", SupportedInterfaces: []*a2apb.AgentInterface{{Url: "http://runtime", ProtocolBinding: "GRPC", ProtocolVersion: "1.0"}}, Capabilities: &a2apb.AgentCapabilities{}, DefaultInputModes: []string{"text"}, DefaultOutputModes: []string{"text"}}}}
+	gateway := newTestGateway(store, &gatewayTestAuthorizer{}, &gatewayTestDialer{}, gatewayTestURL)
+	tenant := "ScheduledRun/" + gatewayTestAgent
+	card, err := gateway.GetExtendedAgentCard(gatewayTestContext(), &a2atype.GetExtendedAgentCardRequest{Tenant: tenant})
+	require.NoError(t, err)
+	require.Equal(t, "schedule card", card.Name)
+	require.Equal(t, definition.ScheduledRun, store.latestSource.Kind)
+	require.Equal(t, "schedule-uid", store.latestSource.UID)
+	require.Equal(t, tenant, card.SupportedInterfaces[1].Tenant)
+	require.Equal(t, gatewayTestURL+HTTPPathPrefix+tenant, card.SupportedInterfaces[0].URL)
+	_, err = gateway.ListTasks(gatewayTestContext(), &a2atype.ListTasksRequest{Tenant: gatewayTestAgent, ContextID: session.Id})
+	require.ErrorIs(t, err, a2atype.ErrUnauthorized)
+	_, err = gateway.ListTasks(gatewayTestContext(), &a2atype.ListTasksRequest{Tenant: tenant})
+	require.NoError(t, err)
+	require.Equal(t, []string{session.Id}, store.listedIDs)
 }

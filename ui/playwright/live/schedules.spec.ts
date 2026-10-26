@@ -1,28 +1,25 @@
 import { test, expect } from "../fixtures/test";
 import { loadLive, throwawayName } from "./helpers/live";
 import { tick } from "../helpers/controls";
+import { optionNamed } from "../helpers/resource";
 
-// Requires one agent with a ready revision, and takes whichever that is. Keep the
-// schedule paused: runtime execution is covered by the Go scheduling E2Es with a
-// controlled model.
+// Uses the standard installation's kagent Harness and default ModelConfig.
+// Keep the schedule paused; runtime execution is covered by the Go E2Es.
 test("live: schedule configuration persists through the browser and controller", async ({ page }) => {
   const name = throwawayName("schedule");
   let detailURL: string | undefined;
   try {
     await loadLive(page, "/schedules");
     await page.getByRole("button", { name: "New Schedule", exact: true }).click();
-    await page.getByLabel("Agent", { exact: true }).click();
-    // Whichever agent the fleet offers, rather than `kagent/smoke on kagent` by name:
-    // #2422 split an agent into a template and a harness, and the form appends a
-    // reason to the label of any whose revision is not ready, so an exact title cannot
-    // match. Disabled ones are excluded because antd renders its "no match" and loading
-    // rows as options too.
-    await page
-      .locator(".ant-select-dropdown:not(.ant-select-dropdown-hidden)")
-      .locator(".ant-select-item-option:not(.ant-select-item-option-disabled)")
-      .first()
-      .click();
-    await page.getByLabel("Schedule Name", { exact: true }).fill(name);
+    await page.getByTestId("schedule-namespace").click();
+    await optionNamed(page, "kagent").filter({ visible: true }).click();
+    await expect(page.locator(".ant-select-dropdown:visible")).toHaveCount(0);
+    await page.getByTestId("schedule-harness").click();
+    await optionNamed(page, "kagent").filter({ visible: true }).click();
+    await page.getByTestId("template-form-model").click();
+    await optionNamed(page, "default-model-config").filter({ visible: true }).click();
+    await page.getByTestId("template-form-prompt").fill("Summarize cluster health accurately.");
+    await page.getByTestId("schedule-name").fill(name);
     await page.getByLabel("Prompt", { exact: true }).fill("Report cluster health.");
     await page.getByLabel("Repeat", { exact: true }).click();
     await page.getByTitle("Weekly", { exact: true }).click();
@@ -33,7 +30,7 @@ test("live: schedule configuration persists through the browser and controller",
     }
     await page.getByLabel("At time", { exact: true }).fill("09:00");
     await page.getByLabel("Time zone", { exact: true }).fill("America/New_York");
-    await page.getByLabel("Execution timeout (seconds)", { exact: true }).fill("90.001");
+    await page.getByLabel("Execution timeout", { exact: true }).fill("90.001s");
     await page.getByLabel("Enable Schedule", { exact: true }).uncheck();
     await page.getByRole("button", { name: "Create schedule", exact: true }).click();
     await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
@@ -41,12 +38,16 @@ test("live: schedule configuration persists through the browser and controller",
     await page.reload();
     await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeEnabled();
     await expect(page.getByText("Weekdays at 09:00", { exact: true })).toBeVisible();
-    await expect(page.getByText("90.001 seconds", { exact: true })).toBeVisible();
+    // Kubernetes normalizes the duration when it persists the CRD.
+    await expect(page.getByText("1m30.001s", { exact: true })).toBeVisible();
     await expect(page.getByText("America/New_York", { exact: true })).toBeVisible();
     await expect(page.getByText("No executions yet", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Edit", exact: true }).click();
     await expect(page.getByLabel("Enable Schedule", { exact: true })).not.toBeChecked();
+    await expect(page.getByTestId("schedule-harness")).toContainText("kagent");
+    await expect(page.getByTestId("template-form-model")).toContainText("default-model-config");
+    await expect(page.getByTestId("template-form-prompt")).toHaveValue("Summarize cluster health accurately.");
     await expect(page.getByText("This schedule will not run automatically after it is saved.")).toBeVisible();
     await page.getByLabel("Time zone", { exact: true }).fill("");
     await expect(page.getByRole("status")).toHaveText("Weekdays at 09:00 (UTC)");
@@ -57,7 +58,7 @@ test("live: schedule configuration persists through the browser and controller",
     await expect(page).toHaveURL(detailURL);
     await page.reload();
     await expect(page.getByText("Report unhealthy workloads only.", { exact: true })).toBeVisible();
-    await expect(page.getByText("90.001 seconds", { exact: true })).toBeVisible();
+    await expect(page.getByText("1m30.001s", { exact: true })).toBeVisible();
   } finally {
     if (detailURL) {
       await page.goto(detailURL);

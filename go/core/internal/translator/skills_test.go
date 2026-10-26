@@ -48,7 +48,7 @@ func TestCompileSkillImageVolumes(t *testing.T) {
 				Plugins: []v1alpha3.PluginBundle{{Source: v1alpha3.ArtifactSource{OCI: image, Path: "plugin"}, Skills: []string{"deploy"}}},
 			}}
 			c := compiler(t, harness, model, secret)
-			result, err := c.CompileAgent(t.Context(), inlineAgent(harness, template))
+			result, err := compileAgent(c, t.Context(), inlineAgent(harness, template))
 			require.NoError(t, err)
 			require.Equal(t, []translator.SkillImage{image}, result.SkillImages)
 			require.NotContains(t, result.EgressDestinations, "https://registry.example.com:443")
@@ -90,7 +90,7 @@ func TestCompileSkillImageVolumes(t *testing.T) {
 			require.NotEqual(t, id, changedID)
 			// The same digest in another repository is a separate source/mount.
 			template.Spec.Plugins[0].Source.OCI = strings.Replace(image, "/skills@", "/other@", 1)
-			updated, err := c.CompileAgent(t.Context(), inlineAgent(harness, template))
+			updated, err := compileAgent(c, t.Context(), inlineAgent(harness, template))
 			require.NoError(t, err)
 			require.Len(t, updated.SkillImages, 2)
 			require.NotEqual(t, updated.SkillImages[0].MountPath(), updated.SkillImages[1].MountPath())

@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
 	"github.com/kagent-dev/kagent/go/core/internal/dbtest"
@@ -136,16 +137,15 @@ func lifecycleFixture(t *testing.T) (*lifecycleTestStore, *apiv1.Session) {
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 	client := database.NewClient(pool, "public")
-	revision := &database.RuntimeRevision{
-		Revision: "revision-1", Namespace: "team-a", AgentName: "assistant", AgentUID: "template-uid",
+	revision := &database.RuntimeRevision{Source: definition.Source{Kind: definition.Agent, Namespace: "team-a", Name: "assistant", UID: "template-uid"}, Revision: "revision-1",
 		SourceSnapshot: []byte("{}"),
 		AgentCard:      &a2apb.AgentCard{Name: "assistant"}, EgressDestinations: []string{},
 		ActorTemplateAtespace: "team-a", ActorTemplateName: "assistant-kagent-revision", ActorTemplateUID: "actor-template-uid",
 	}
-	upsertErr := client.UpsertAgentDefinition(t.Context(), database.AgentDefinition{Namespace: "team-a", AgentName: "assistant", AgentUID: "template-uid", DesiredRevision: revision.Revision})
+	upsertErr := client.UpsertAgentDefinition(t.Context(), database.AgentDefinition{Source: definition.Source{Kind: definition.Agent, Namespace: "team-a", Name: "assistant", UID: "template-uid"}, DesiredRevision: revision.Revision})
 	require.NoError(t, upsertErr)
 	require.NoError(t, client.RecordRuntimeRevision(t.Context(), *revision, database.RecordRevisionOptions{Ready: true}))
-	session, _, err := client.CreateSession(t.Context(), &apiv1.Session{Id: uuid.NewString(), Creator: "alice", Agent: &apiv1.ResourceReference{Namespace: "team-a", Name: "assistant"}}, uuid.NewString())
+	session, _, err := client.CreateSession(t.Context(), &apiv1.Session{Id: uuid.NewString(), Creator: "alice", Source: &apiv1.Session_Agent{Agent: &apiv1.AgentProvenance{Ref: &apiv1.ResourceReference{Namespace: "team-a", Name: "assistant"}}}}, uuid.NewString())
 	require.NoError(t, err)
 	return &lifecycleTestStore{Client: client, revision: revision}, session
 }
@@ -324,10 +324,10 @@ func lifecycleForkFixture(t *testing.T, store *lifecycleTestStore, actors *lifec
 	_, err = store.FinalizeSessionCheckpoint(t.Context(), checkpoint.Id, "tag-uid", "s3://snapshots/snapshot-1", "")
 	require.NoError(t, err)
 	requestID := uuid.NewString()
-	fork, _, err := store.ForkSession(t.Context(), checkpoint.Id, source.Creator, requestID, uuid.NewString())
+	fork, _, err := store.ForkSession(t.Context(), checkpoint.Id, source.Creator, source.Creator, requestID, uuid.NewString())
 	require.NoError(t, err)
 	// An ordinary Create must not reuse a fork request ID, even for the same pair.
-	_, _, err = store.CreateSession(t.Context(), &apiv1.Session{Id: uuid.NewString(), Creator: source.Creator, Agent: source.Agent, Name: fork.Name}, requestID)
+	_, _, err = store.CreateSession(t.Context(), &apiv1.Session{Id: uuid.NewString(), Creator: source.Creator, Name: fork.Name, Source: &apiv1.Session_Agent{Agent: source.GetAgent()}}, requestID)
 	require.ErrorIs(t, err, database.ErrIdempotencyConflict)
 	return fork, checkpoint.Id
 }
@@ -447,12 +447,12 @@ func TestServiceLifecycleRetriesUseCurrentStateAndRespectDeletion(t *testing.T) 
 	actors := &retryTestActors{lifecycleTestActors: &lifecycleTestActors{actors: map[string]*ateapipb.Actor{}}}
 	service := NewService(store, serviceTestAuthorizer{}, NewActorWorkflow(store, actors, make(chan struct{}, 1), time.Second))
 	ctx := serviceTestContext("alice")
-	session, err := service.Create(ctx, fixture.Agent, "retry-request", "conversation")
+	session, err := service.Create(ctx, fixture.GetAgent().Ref, "retry-request", "conversation")
 	require.NoError(t, err)
 	renamed, err := service.Rename(ctx, session.Id, "renamed conversation")
 	require.NoError(t, err)
 	mutations := actors.mutations.Load()
-	retried, err := service.Create(ctx, fixture.Agent, "retry-request", "ignored retry name")
+	retried, err := service.Create(ctx, fixture.GetAgent().Ref, "retry-request", "ignored retry name")
 	require.NoError(t, err)
 	require.Equal(t, renamed.Id, retried.Id)
 	require.Equal(t, renamed.Name, retried.Name)
@@ -463,11 +463,39 @@ func TestServiceLifecycleRetriesUseCurrentStateAndRespectDeletion(t *testing.T) 
 	require.Equal(t, apiv1.RuntimeState_RUNTIME_STATE_DELETED, deleted.State)
 	require.Empty(t, deleted.A2AAuthority)
 	mutations = actors.mutations.Load()
-	_, err = service.Create(ctx, fixture.Agent, "retry-request", "")
+	_, err = service.Create(ctx, fixture.GetAgent().Ref, "retry-request", "")
 	require.True(t, serviceerrors.IsCode(err, serviceerrors.CodeFailedPrecondition))
 	_, err = service.Get(ctx, session.Id)
 	require.True(t, serviceerrors.IsCode(err, serviceerrors.CodeNotFound))
 	_, err = service.Delete(ctx, session.Id)
 	require.True(t, serviceerrors.IsCode(err, serviceerrors.CodeNotFound))
 	require.Equal(t, mutations, actors.mutations.Load(), "a tombstoned request must not create or touch compute")
+}
+
+func TestActorWorkflowResumesCrossOwnerCheckpointFork(t *testing.T) {
+	store, source := lifecycleFixture(t)
+	base := &lifecycleTestActors{actors: map[string]*ateapipb.Actor{}}
+	_, checkpointID := lifecycleForkFixture(t, store, base, source)
+	fork, _, err := store.ForkSession(t.Context(), checkpointID, source.Creator, "human", uuid.NewString(), uuid.NewString())
+	require.NoError(t, err)
+	require.Equal(t, "human", fork.Creator)
+	_, _, err = store.GetSessionCheckpointSnapshot(t.Context(), checkpointID, fork.Creator)
+	require.ErrorIs(t, err, database.ErrNotFound, "the fork must not grant ownership of the source checkpoint")
+	_, err = store.GetSessionOperationCheckpoint(t.Context(), fork.Id, uuid.New())
+	require.ErrorIs(t, err, database.ErrNotFound, "only the admitted creation can resolve the pin")
+	actors := &retryTestActors{lifecycleTestActors: base}
+	base.policyErr = context.DeadlineExceeded
+	_, err = NewActorWorkflow(store, actors, make(chan struct{}, 1), time.Second).Create(t.Context(), fork)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	pending, err := store.GetSessionByID(t.Context(), fork.Id)
+	require.NoError(t, err)
+	require.Equal(t, apiv1.RuntimeState_RUNTIME_STATE_CREATING, pending.State)
+	base.policyErr = nil
+	ready, err := NewActorWorkflow(store, actors, make(chan struct{}, 1), time.Second).Create(t.Context(), pending)
+	require.NoError(t, err)
+	require.Equal(t, apiv1.RuntimeState_RUNTIME_STATE_READY, ready.State)
+	require.Equal(t, "human", ready.Creator)
+	actor := base.actors[actorKey("team-a", substrate.ActorName(fork.Id))]
+	require.Equal(t, "checkpoint-"+checkpointID, actor.GetSourceTag().GetName())
+	require.EqualValues(t, 1, actors.mutations.Load(), "recovery must reuse the forked Actor")
 }

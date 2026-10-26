@@ -34,7 +34,7 @@ func TestGrantAdmissionAcrossSources(t *testing.T) {
 				case "agent":
 					collections, _ := newPreparationTestCollections(t, "gvisor")
 					initial := collections.Reconciliations.List()[0]
-					agent := initial.Agent.DeepCopy()
+					agent := (*collections.Agents.GetKey(initial.Source.Namespace + "/" + initial.Source.Name)).DeepCopy()
 					agent.Spec.EgressPolicyRefs = []corev1.LocalObjectReference{{Name: "a"}, {Name: "b"}}
 					collections.Agents.(krt.StaticCollection[*v1alpha3.Agent]).UpdateObject(agent)
 					policies = collections.EgressPolicies.(krt.StaticCollection[*v1alpha3.EgressPolicy])
@@ -130,7 +130,7 @@ func TestAgentGrantAdmissionReservesTokenPassthroughOrigins(t *testing.T) {
 		initial := collections.Reconciliations.List()[0]
 		target := egresspolicy.GatewayTarget{Origin: origin, Header: "authorization", Prefix: "Bearer "}
 		require.Equal(t, []egresspolicy.GatewayTarget{target}, initial.Target.Revision.TokenPassthroughTargets)
-		agent := initial.Agent.DeepCopy()
+		agent := (*collections.Agents.GetKey(initial.Source.Namespace + "/" + initial.Source.Name)).DeepCopy()
 		agent.Spec.EgressPolicyRefs = []corev1.LocalObjectReference{{Name: "keys"}}
 		collections.Agents.(krt.StaticCollection[*v1alpha3.Agent]).UpdateObject(agent)
 		prepared := proto.CloneOf(initial.Target.ActorTemplate)
@@ -162,7 +162,7 @@ func TestAgentGrantAdmissionWithAndWithoutCompiledBase(t *testing.T) {
 		r := &Reconciler{collections: collections, templates: &fakeActorTemplates{template: template}, store: store}
 		policies := collections.EgressPolicies.(krt.StaticCollection[*v1alpha3.EgressPolicy])
 		agents := collections.Agents.(krt.StaticCollection[*v1alpha3.Agent])
-		agent := initial.Agent.DeepCopy()
+		agent := (*collections.Agents.GetKey(initial.Source.Namespace + "/" + initial.Source.Name)).DeepCopy()
 		agent.Spec.EgressPolicyRefs = []corev1.LocalObjectReference{{Name: "a"}, {Name: "b"}}
 		agents.UpdateObject(agent)
 		harness := harnesses.List()[0]

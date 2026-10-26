@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/kagent-dev/kagent/go/api/authorization"
+	"github.com/kagent-dev/kagent/go/api/definition"
 	"github.com/kagent-dev/kagent/go/core/pkg/auth"
 )
 
@@ -29,9 +30,10 @@ func (a *Authorizer) Check(ctx context.Context, principal auth.Principal, verb a
 	if err != nil {
 		return err
 	}
+	source := definition.FromSession(session)
 	switch resource.Type {
-	case "Agent":
-		if verb == auth.VerbGet && resource.Namespace == session.GetAgent().GetNamespace() && resource.Name == session.GetAgent().GetName() {
+	case "Agent", "ScheduledRun":
+		if resource.Type == string(source.Kind) && verb == auth.VerbGet && resource.Namespace == source.Namespace && resource.Name == source.Name {
 			return nil
 		}
 	case "Session":
@@ -44,7 +46,7 @@ func (a *Authorizer) Check(ctx context.Context, principal auth.Principal, verb a
 			return nil
 		}
 	case "Memory":
-		if resource.Name == session.GetAgent().GetNamespace()+"/"+session.GetAgent().GetName() &&
+		if resource.Name == source.Key() &&
 			(verb == auth.VerbGet || verb == auth.VerbList || verb == auth.VerbCreate || verb == auth.VerbDelete) {
 			return nil
 		}
@@ -60,11 +62,12 @@ func (a *Authorizer) Scope(ctx context.Context, principal auth.Principal, verb a
 	if err != nil {
 		return authorization.AuthorizationScope{}, err
 	}
-	if verb != auth.VerbList || resourceType != "Agent" {
+	source := definition.FromSession(session)
+	if verb != auth.VerbList || resourceType != string(source.Kind) {
 		return authorization.AuthorizationScope{Kind: authorization.ScopeNone}, nil
 	}
 	return authorization.AuthorizationScope{Kind: authorization.ScopeAnyOf, AnyOf: []authorization.ScopeClause{{All: []authorization.ScopePredicate{
-		{Attribute: authorization.AttributeNamespace, Operator: authorization.ScopeIn, Values: []string{session.GetAgent().GetNamespace()}},
-		{Attribute: authorization.AttributeName, Operator: authorization.ScopeIn, Values: []string{session.GetAgent().GetName()}},
+		{Attribute: authorization.AttributeNamespace, Operator: authorization.ScopeIn, Values: []string{source.Namespace}},
+		{Attribute: authorization.AttributeName, Operator: authorization.ScopeIn, Values: []string{source.Name}},
 	}}}}, nil
 }

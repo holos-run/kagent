@@ -33,7 +33,10 @@ it("forks through Session RPCs and reads the new conversation identity", async (
     router.service(CheckpointService, {
       forkSession(request) {
         expect(request).toMatchObject({ checkpointId: "checkpoint", requestId: "fork-request" });
-        return { session: { id: "forked-session", contextId: "forked-session", name: "Saved turn" } };
+        return { session: {
+          id: "forked-session", contextId: "forked-session", name: "Saved turn",
+          source: { case: "agent", value: { ref: { namespace: "kagent", name: "assistant" }, uid: "agent-uid" } },
+        } };
       },
     });
   }));

@@ -778,7 +778,7 @@ describe("agent instances", () => {
       id: INSTANCE_ID,
       contextId: INSTANCE_ID,
       creator: "alice@example.com",
-      agent: { namespace: "kagent", name: "k8s-agent-7f3a91c" },
+      source: { case: "agent" as const, value: { ref: { namespace: "kagent", name: "k8s-agent-7f3a91c" }, uid: "agent-uid" } },
       preparedRevision: "rev-7f3a91c",
       a2aAuthority: "k8s-agent.kagent.svc:8080",
       state: RuntimeState.READY,
@@ -814,7 +814,7 @@ describe("agent instances", () => {
     expect(ready?.contextId).toBe(INSTANCE_ID);
     expect(ready?.state).toBe("ready");
     expect(ready?.operation).toBe("unspecified");
-    expect(ready?.agent).toBe("kagent/k8s-agent-7f3a91c");
+    expect(ready?.source).toEqual({ kind: "Agent", namespace: "kagent", name: "k8s-agent-7f3a91c", uid: "agent-uid" });
     expect(ready?.createdAt).toBe("2026-01-01T00:00:00.000Z");
 
     expect(suspended?.state).toBe("suspended");
@@ -858,7 +858,6 @@ describe("agent instances", () => {
         listSessions: () => ({
           sessions: [
             instanceMessage({
-              agent: undefined,
               preparedRevision: "",
               a2aAuthority: "",
               createdAt: undefined,
@@ -872,11 +871,37 @@ describe("agent instances", () => {
     });
 
     const [row] = await apiClient.agentInstances.list();
-    expect(row.agent).toBeUndefined();
     expect(row.preparedRevision).toBeUndefined();
     expect(row.a2aAuthority).toBeUndefined();
     expect(row.createdAt).toBe("");
     expect(row.failure).toBeUndefined();
+  });
+
+  it("preserves ScheduledRun provenance", async () => {
+    serve(({ service }) => {
+      service(SessionService, {
+        listSessions: () => ({ sessions: [instanceMessage({
+          source: { case: "scheduledRun", value: { ref: { namespace: "kagent", name: "daily" }, uid: "schedule-uid", executionId: "execution-id" } },
+        })], page: {} }),
+      });
+    });
+    const [row] = await apiClient.agentInstances.list();
+    expect(row.source).toEqual({ kind: "ScheduledRun", namespace: "kagent", name: "daily", uid: "schedule-uid", executionId: "execution-id" });
+  });
+
+  it.each([
+    [undefined, "Session source"],
+    [{ case: "agent", value: { uid: "agent-uid" } }, "Session source reference"],
+    [{ case: "agent", value: { ref: { name: "agent" }, uid: "agent-uid" } }, "Session source namespace"],
+    [{ case: "agent", value: { ref: { namespace: "kagent" }, uid: "agent-uid" } }, "Session source name"],
+    [{ case: "agent", value: { ref: { namespace: "kagent", name: "agent" } } }, "Session source UID"],
+  ])("rejects incomplete provenance (%j)", async (source, missing) => {
+    serve(({ service }) => {
+      service(SessionService, {
+        listSessions: () => ({ sessions: [instanceMessage({ source })], page: {} }),
+      });
+    });
+    await expect(apiClient.agentInstances.list()).rejects.toThrow(`The API returned no ${missing}.`);
   });
 
   it("keeps a failure the controller sent with nothing in it", async () => {

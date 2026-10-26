@@ -14,13 +14,14 @@ import (
 	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	"github.com/kagent-dev/kagent/go/core/internal/translator"
 )
 
 func TestActorTemplateSkillVolumeLimit(t *testing.T) {
 	for _, count := range []int{0, 29, 30} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
-			spec := &translator.Revision{CPU: "1", Memory: "1Gi", Namespace: "test", AgentName: "skills", AgentCard: &a2apb.AgentCard{
+			spec := &translator.Revision{Source: definition.Source{Kind: definition.Agent, Namespace: "test", Name: "skills"}, CPU: "1", Memory: "1Gi", AgentCard: &a2apb.AgentCard{
 				Name: "skills", Version: "v1", Capabilities: &a2apb.AgentCapabilities{},
 				DefaultInputModes: []string{"text"}, DefaultOutputModes: []string{"text"},
 				SupportedInterfaces: []*a2apb.AgentInterface{{Url: "http://127.0.0.1:80", ProtocolBinding: "GRPC", ProtocolVersion: "1.0"}},
@@ -55,8 +56,8 @@ func testWorkerPoolSelection(t *testing.T, template *ateapipb.ActorTemplate, nam
 }
 
 func TestActorTemplateForRevision(t *testing.T) {
-	spec := &translator.Revision{CPU: "1", Memory: "1Gi",
-		Namespace: "agents", AgentName: "helper",
+	spec := &translator.Revision{Source: definition.Source{Kind: definition.Agent, Namespace: "agents", Name: "helper"}, CPU: "1", Memory: "1Gi",
+
 		Image:          "agent.example/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Command:        []string{"/agent"},
 		Args:           []string{"serve"},
@@ -125,8 +126,8 @@ func TestActorTemplateStampsTheRevisionOnTheResource(t *testing.T) {
 		{name: "replaces forged version", environment: []corev1.EnvVar{{Name: "OTEL_RESOURCE_ATTRIBUTES", Value: "gen_ai.main_agent.name=helper-kagent,service.version=forged"}}, wantPrefix: "gen_ai.main_agent.name=helper-kagent,"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			spec := &translator.Revision{CPU: "1", Memory: "1Gi",
-				Namespace: "agents", AgentName: "helper", WorkerPoolName: "default",
+			spec := &translator.Revision{Source: definition.Source{Kind: definition.Agent, Namespace: "agents", Name: "helper"}, CPU: "1", Memory: "1Gi",
+				WorkerPoolName: "default",
 				AgentCard: &a2apb.AgentCard{Name: "helper", Version: "v1", Capabilities: &a2apb.AgentCapabilities{},
 					SupportedInterfaces: []*a2apb.AgentInterface{{Url: "http://127.0.0.1:80", ProtocolBinding: "GRPC", ProtocolVersion: "1.0"}},
 					DefaultInputModes:   []string{"text"}, DefaultOutputModes: []string{"text"}},
@@ -188,9 +189,9 @@ func TestActorTemplateEnvironmentValueSize(t *testing.T) {
 				Instruction string `json:"instruction"`
 			}{test.instruction})
 			require.NoError(t, err)
-			spec := &translator.Revision{CPU: "1", Memory: "1Gi",
-				Namespace: "agents", AgentName: "helper", WorkerPoolName: "default",
-				ConfigJSON: config, Environment: test.environment,
+			spec := &translator.Revision{Source: definition.Source{Kind: definition.Agent, Namespace: "agents", Name: "helper"}, CPU: "1", Memory: "1Gi",
+				WorkerPoolName: "default",
+				ConfigJSON:     config, Environment: test.environment,
 				AgentCard: &a2apb.AgentCard{Name: "helper", Description: test.description, Version: "v1", Capabilities: &a2apb.AgentCapabilities{},
 					SupportedInterfaces: []*a2apb.AgentInterface{{Url: "http://127.0.0.1:80", ProtocolBinding: "GRPC", ProtocolVersion: "1.0"}},
 					DefaultInputModes:   []string{"text"}, DefaultOutputModes: []string{"text"}},

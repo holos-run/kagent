@@ -13,6 +13,7 @@ import (
 	"istio.io/istio/pkg/kube/krt"
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	configv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/config/v1"
 	kagentv1alpha3 "github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/translator"
@@ -20,36 +21,37 @@ import (
 
 // Collections contains shared Kubernetes inputs and compiled Agent state.
 type Collections struct {
-	watchNamespaces          []string
-	EgressPolicies           krt.Collection[*kagentv1alpha3.EgressPolicy]
-	SandboxTemplates         krt.Collection[*kagentv1alpha3.SandboxTemplate]
-	Agents                   krt.Collection[*kagentv1alpha3.Agent]
-	AgentTemplates           krt.Collection[*kagentv1alpha3.AgentTemplate]
-	Harnesses                krt.Collection[*kagentv1alpha3.Harness]
-	ModelConfigs             krt.Collection[*kagentv1alpha3.ModelConfig]
-	RemoteMCPServers         krt.Collection[*kagentv1alpha3.RemoteMCPServer]
-	ConfigMaps               krt.Collection[*corev1.ConfigMap]
-	Secrets                  krt.Collection[*corev1.Secret]
-	WorkerPools              krt.Collection[*atev1.WorkerPool]
-	AgentRuntimeObservations krt.StaticCollection[AgentRuntimeObservation]
-	Reconciliations          krt.Collection[AgentReconciliation]
-	ModelConfigStatuses      krt.StatusCollection[*kagentv1alpha3.ModelConfig, kagentv1alpha3.ModelConfigStatus]
-	ResolvedModelConfigs     krt.Collection[translator.ResolvedModelConfig]
-	AgentStatuses            krt.StatusCollection[*kagentv1alpha3.Agent, kagentv1alpha3.AgentStatus]
+	watchNamespaces             []string
+	ScheduledRuns               krt.Collection[*kagentv1alpha3.ScheduledRun]
+	ScheduledRunReconciliations krt.Collection[ScheduledRunReconciliation]
+	EgressPolicies              krt.Collection[*kagentv1alpha3.EgressPolicy]
+	SandboxTemplates            krt.Collection[*kagentv1alpha3.SandboxTemplate]
+	Agents                      krt.Collection[*kagentv1alpha3.Agent]
+	AgentTemplates              krt.Collection[*kagentv1alpha3.AgentTemplate]
+	Harnesses                   krt.Collection[*kagentv1alpha3.Harness]
+	ModelConfigs                krt.Collection[*kagentv1alpha3.ModelConfig]
+	RemoteMCPServers            krt.Collection[*kagentv1alpha3.RemoteMCPServer]
+	ConfigMaps                  krt.Collection[*corev1.ConfigMap]
+	Secrets                     krt.Collection[*corev1.Secret]
+	WorkerPools                 krt.Collection[*atev1.WorkerPool]
+	AgentRuntimeObservations    krt.StaticCollection[AgentRuntimeObservation]
+	Reconciliations             krt.Collection[AgentReconciliation]
+	ModelConfigStatuses         krt.StatusCollection[*kagentv1alpha3.ModelConfig, kagentv1alpha3.ModelConfigStatus]
+	ResolvedModelConfigs        krt.Collection[translator.ResolvedModelConfig]
+	AgentStatuses               krt.StatusCollection[*kagentv1alpha3.Agent, kagentv1alpha3.AgentStatus]
 }
 
 // AgentRuntimeObservation records a Agent's preparation. The revision prevents a
 // cached observation from making changed inputs ready before reconciliation.
 type AgentRuntimeObservation struct {
-	Namespace  string
-	AgentName  string
+	definition.Source
 	RevisionID translator.RevisionID
 	Template   *ateapipb.ActorTemplate
 	Failure    *ReconciliationFailure
 }
 
 func (p AgentRuntimeObservation) ResourceName() string {
-	return p.Namespace + "/" + p.AgentName
+	return p.Key()
 }
 
 var _ krt.Equaler[AgentRuntimeObservation] = AgentRuntimeObservation{}
@@ -66,6 +68,7 @@ func (p AgentRuntimeObservation) Equals(other AgentRuntimeObservation) bool {
 // NewCollections creates the complete read-only input graph. An empty
 // watchNamespaces list watches all namespaces.
 func NewCollections(client kube.Client, watchNamespaces []string, opts krt.OptionsBuilder, settings *configv1.RuntimeDefaultsConfig, images *configv1.HarnessImagesConfig) Collections {
+	scheduledRuns := typedCollection[*kagentv1alpha3.ScheduledRun](client, watchNamespaces, "ScheduledRuns", opts)
 	egressPolicies := typedCollection[*kagentv1alpha3.EgressPolicy](client, watchNamespaces, "EgressPolicies", opts)
 	sandboxTemplates := typedCollection[*kagentv1alpha3.SandboxTemplate](client, watchNamespaces, "SandboxTemplates", opts)
 	agents := typedCollection[*kagentv1alpha3.Agent](client, watchNamespaces, "Agents", opts)
@@ -83,27 +86,30 @@ func NewCollections(client kube.Client, watchNamespaces []string, opts krt.Optio
 		Harnesses:      harnesses, AgentTemplates: agentTemplates, ResolvedModelConfigs: resolvedModelConfigs, RemoteMCPServers: remoteMCPServers,
 		ConfigMaps: configMaps, Secrets: secrets, WorkerPools: workerPools,
 	}
-	compilerCollections.Namespaces = newReferenceNamespaces(client, agents, compilerCollections, opts)
-	reconciliations := newAgentReconciliations(agents, compilerCollections, agentRuntimeObservations, opts, settings, images)
+	sources := newDefinitionInputs(agents, scheduledRuns, opts)
+	compilerCollections.Namespaces = newReferenceNamespaces(client, sources, compilerCollections, opts)
+	reconciliations := newAgentReconciliations(sources, compilerCollections, agentRuntimeObservations, opts, settings, images)
 	statuses := newAgentStatuses(agents, reconciliations, opts)
 
 	return Collections{
-		watchNamespaces:          slices.Clone(watchNamespaces),
-		EgressPolicies:           egressPolicies,
-		SandboxTemplates:         sandboxTemplates,
-		Agents:                   agents,
-		AgentTemplates:           agentTemplates,
-		Harnesses:                harnesses,
-		ModelConfigs:             modelConfigs,
-		RemoteMCPServers:         remoteMCPServers,
-		ConfigMaps:               configMaps,
-		Secrets:                  secrets,
-		WorkerPools:              workerPools,
-		AgentRuntimeObservations: agentRuntimeObservations,
-		Reconciliations:          reconciliations,
-		ModelConfigStatuses:      modelConfigStatuses,
-		ResolvedModelConfigs:     resolvedModelConfigs,
-		AgentStatuses:            statuses,
+		watchNamespaces:             slices.Clone(watchNamespaces),
+		ScheduledRuns:               scheduledRuns,
+		ScheduledRunReconciliations: newScheduledRunReconciliations(scheduledRuns, reconciliations, opts),
+		EgressPolicies:              egressPolicies,
+		SandboxTemplates:            sandboxTemplates,
+		Agents:                      agents,
+		AgentTemplates:              agentTemplates,
+		Harnesses:                   harnesses,
+		ModelConfigs:                modelConfigs,
+		RemoteMCPServers:            remoteMCPServers,
+		ConfigMaps:                  configMaps,
+		Secrets:                     secrets,
+		WorkerPools:                 workerPools,
+		AgentRuntimeObservations:    agentRuntimeObservations,
+		Reconciliations:             reconciliations,
+		ModelConfigStatuses:         modelConfigStatuses,
+		ResolvedModelConfigs:        resolvedModelConfigs,
+		AgentStatuses:               statuses,
 	}
 }
 
@@ -117,4 +123,24 @@ func typedCollection[T controllers.ComparableObject](client kube.Client, namespa
 		collections = append(collections, krt.NewFilteredInformer[T](client, kclient.Filter{Namespace: namespace}, opts.WithName(name+"/"+namespace)...))
 	}
 	return krt.JoinCollection(collections, append(opts.WithName(name), krt.WithJoinUnchecked())...)
+}
+
+// definitionInput gives every AgentSpec source the same compilation path. The
+// resource controllers remain responsible for their own Kubernetes status.
+type definitionInput struct {
+	definition.Source
+	Spec     kagentv1alpha3.AgentSpec
+	Deleting bool
+}
+
+func (d definitionInput) ResourceName() string { return d.Key() }
+
+func newDefinitionInputs(agents krt.Collection[*kagentv1alpha3.Agent], schedules krt.Collection[*kagentv1alpha3.ScheduledRun], opts krt.OptionsBuilder) krt.Collection[definitionInput] {
+	agentInputs := krt.NewCollection(agents, func(_ krt.HandlerContext, agent *kagentv1alpha3.Agent) *definitionInput {
+		return &definitionInput{Source: definition.Source{Kind: definition.Agent, Namespace: agent.Namespace, Name: agent.Name, UID: string(agent.UID)}, Spec: agent.Spec, Deleting: !agent.DeletionTimestamp.IsZero()}
+	}, opts.WithName("AgentDefinitions")...)
+	scheduleInputs := krt.NewCollection(schedules, func(_ krt.HandlerContext, schedule *kagentv1alpha3.ScheduledRun) *definitionInput {
+		return &definitionInput{Source: definition.Source{Kind: definition.ScheduledRun, Namespace: schedule.Namespace, Name: schedule.Name, UID: string(schedule.UID)}, Spec: schedule.Spec.Agent, Deleting: !schedule.DeletionTimestamp.IsZero()}
+	}, opts.WithName("ScheduledRunDefinitions")...)
+	return krt.JoinCollection([]krt.Collection[definitionInput]{agentInputs, scheduleInputs}, opts.WithName("AgentSpecSources")...)
 }

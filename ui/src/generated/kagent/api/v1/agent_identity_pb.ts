@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kagent/api/v1/agent_identity.proto.
  */
 export const file_kagent_api_v1_agent_identity: GenFile = /*@__PURE__*/
-  fileDesc("CiJrYWdlbnQvYXBpL3YxL2FnZW50X2lkZW50aXR5LnByb3RvEg1rYWdlbnQuYXBpLnYxIh0KG1Jlc29sdmVBZ2VudElkZW50aXR5UmVxdWVzdCKeAgoNQWdlbnRJZGVudGl0eRIRCgluYW1lc3BhY2UYASABKAkSDAoEbmFtZRgCIAEoCRILCgN1aWQYAyABKAkSOAoGbGFiZWxzGAQgAygLMigua2FnZW50LmFwaS52MS5BZ2VudElkZW50aXR5LkxhYmVsc0VudHJ5EkIKC2Fubm90YXRpb25zGAUgAygLMi0ua2FnZW50LmFwaS52MS5BZ2VudElkZW50aXR5LkFubm90YXRpb25zRW50cnkaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ARoyChBBbm5vdGF0aW9uc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEieQocUmVzb2x2ZUFnZW50SWRlbnRpdHlSZXNwb25zZRIrCgVhZ2VudBgBIAEoCzIcLmthZ2VudC5hcGkudjEuQWdlbnRJZGVudGl0eRISCgpzZXNzaW9uX2lkGAIgASgJEhgKEHJ1bnRpbWVfcmV2aXNpb24YAyABKAkyhwEKFEFnZW50SWRlbnRpdHlTZXJ2aWNlEm8KFFJlc29sdmVBZ2VudElkZW50aXR5Eioua2FnZW50LmFwaS52MS5SZXNvbHZlQWdlbnRJZGVudGl0eVJlcXVlc3QaKy5rYWdlbnQuYXBpLnYxLlJlc29sdmVBZ2VudElkZW50aXR5UmVzcG9uc2VCPVo7Z2l0aHViLmNvbS9rYWdlbnQtZGV2L2thZ2VudC9nby9hcGkvZ2VuL2thZ2VudC9hcGkvdjE7YXBpdjFiBnByb3RvMw");
+  fileDesc("CiJrYWdlbnQvYXBpL3YxL2FnZW50X2lkZW50aXR5LnByb3RvEg1rYWdlbnQuYXBpLnYxIh0KG1Jlc29sdmVBZ2VudElkZW50aXR5UmVxdWVzdCKsAgoNQWdlbnRJZGVudGl0eRIRCgluYW1lc3BhY2UYASABKAkSDAoEbmFtZRgCIAEoCRILCgN1aWQYAyABKAkSOAoGbGFiZWxzGAQgAygLMigua2FnZW50LmFwaS52MS5BZ2VudElkZW50aXR5LkxhYmVsc0VudHJ5EkIKC2Fubm90YXRpb25zGAUgAygLMi0ua2FnZW50LmFwaS52MS5BZ2VudElkZW50aXR5LkFubm90YXRpb25zRW50cnkSDAoEa2luZBgGIAEoCRotCgtMYWJlbHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBGjIKEEFubm90YXRpb25zRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJ5ChxSZXNvbHZlQWdlbnRJZGVudGl0eVJlc3BvbnNlEisKBWFnZW50GAEgASgLMhwua2FnZW50LmFwaS52MS5BZ2VudElkZW50aXR5EhIKCnNlc3Npb25faWQYAiABKAkSGAoQcnVudGltZV9yZXZpc2lvbhgDIAEoCTKHAQoUQWdlbnRJZGVudGl0eVNlcnZpY2USbwoUUmVzb2x2ZUFnZW50SWRlbnRpdHkSKi5rYWdlbnQuYXBpLnYxLlJlc29sdmVBZ2VudElkZW50aXR5UmVxdWVzdBorLmthZ2VudC5hcGkudjEuUmVzb2x2ZUFnZW50SWRlbnRpdHlSZXNwb25zZUI9WjtnaXRodWIuY29tL2thZ2VudC1kZXYva2FnZW50L2dvL2FwaS9nZW4va2FnZW50L2FwaS92MTthcGl2MWIGcHJvdG8z");
 
 /**
  * @generated from message kagent.api.v1.ResolveAgentIdentityRequest
@@ -26,8 +26,8 @@ export const ResolveAgentIdentityRequestSchema: GenMessage<ResolveAgentIdentityR
   messageDesc(file_kagent_api_v1_agent_identity, 0);
 
 /**
- * AgentIdentity contains current metadata from the exact Agent UID bound to the
- * Actor's runtime revision. Labels and annotations are operator-controlled.
+ * AgentIdentity contains current metadata from the exact source resource bound
+ * to the Actor's runtime revision. Labels and annotations are operator-controlled.
  *
  * @generated from message kagent.api.v1.AgentIdentity
  */
@@ -56,6 +56,13 @@ export type AgentIdentity = Message<"kagent.api.v1.AgentIdentity"> & {
    * @generated from field: map<string, string> annotations = 5;
    */
   annotations: { [key: string]: string };
+
+  /**
+   * Kubernetes resource providing the AgentSpec: Agent or ScheduledRun.
+   *
+   * @generated from field: string kind = 6;
+   */
+  kind: string;
 };
 
 /**

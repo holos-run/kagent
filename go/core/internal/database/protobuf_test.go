@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 )
 
@@ -111,7 +112,7 @@ func TestProtobufPersistenceLifecycle(t *testing.T) {
 	sessionFixture(t, client, ctx, "team-a", "revision", "assistant", "kagent")
 	request := newSessionRequest(uuid.NewString(), "assistant", "kagent", "original")
 	addUnknown(request)
-	addUnknown(request.Agent)
+	addUnknown(request.GetAgent())
 	session, _, err := client.CreateSession(ctx, request, "create")
 	require.NoError(t, err)
 	_, err = client.UpdateSessionName(ctx, session.Id, "alice", "renamed while creating")
@@ -141,7 +142,7 @@ func TestProtobufPersistenceLifecycle(t *testing.T) {
 	require.True(t, proto.Equal(session, reconstructed))
 	require.True(t, proto.Equal(session, stored), "persist the full Session protobuf")
 	require.Equal(t, request.ProtoReflect().GetUnknown(), stored.ProtoReflect().GetUnknown())
-	require.Equal(t, request.Agent.ProtoReflect().GetUnknown(), stored.Agent.ProtoReflect().GetUnknown())
+	require.Equal(t, request.GetAgent().ProtoReflect().GetUnknown(), stored.GetAgent().ProtoReflect().GetUnknown())
 	session, err = finishSessionOperation(ctx, client, session.Id, apiv1.RuntimeOperation_RUNTIME_OPERATION_RESUME, "")
 	require.NoError(t, err)
 
@@ -189,7 +190,7 @@ func TestProtobufPersistenceLifecycle(t *testing.T) {
 	require.Equal(t, checkpointRequest.ProtoReflect().GetUnknown(), checkpoint.ProtoReflect().GetUnknown())
 	_, err = client.GetSessionCheckpoint(ctx, checkpoint.Id, "mallory")
 	require.ErrorIs(t, err, ErrNotFound)
-	fork, created, err := client.ForkSession(ctx, checkpoint.Id, "alice", "fork", uuid.NewString())
+	fork, created, err := client.ForkSession(ctx, checkpoint.Id, "alice", "alice", "fork", uuid.NewString())
 	require.NoError(t, err)
 	require.True(t, created)
 	tasks, total, err := client.ListSessionTasks(ctx, fork.Id, "", a2a.TaskStateUnspecified, nil, 10, nil)
@@ -286,7 +287,7 @@ func TestShareAndAgentCardProtobufPersistence(t *testing.T) {
 	card, err := pbconv.ToProtoAgentCard(&a2a.AgentCard{Name: "assistant", Description: "assistant", Version: "v1", SupportedInterfaces: []*a2a.AgentInterface{a2a.NewAgentInterface("http://runtime", a2a.TransportProtocolGRPC)}, DefaultInputModes: []string{"text"}, DefaultOutputModes: []string{"text"}, Skills: []a2a.AgentSkill{{ID: "skill", Name: "skill", Description: "skill", Tags: []string{"tag"}}}, Capabilities: a2a.AgentCapabilities{Streaming: true}})
 	require.NoError(t, err)
 	addUnknown(card)
-	revision := RuntimeRevision{Revision: "revision", Namespace: "team-a", AgentName: "assistant", AgentUID: "template", SourceSnapshot: []byte(`{}`), AgentCard: card, EgressDestinations: []string{}, ActorTemplateAtespace: "team-a", ActorTemplateName: "template"}
+	revision := RuntimeRevision{Source: definition.Source{Kind: definition.Agent, Namespace: "team-a", Name: "assistant", UID: "template"}, Revision: "revision", SourceSnapshot: []byte(`{}`), AgentCard: card, EgressDestinations: []string{}, ActorTemplateAtespace: "team-a", ActorTemplateName: "template"}
 	require.NoError(t, client.RecordRuntimeRevision(ctx, revision, RecordRevisionOptions{}))
 	// Reconciliation can update runtime identity, but the pinned card is immutable.
 	revision.AgentCard = &a2apb.AgentCard{Name: "replacement"}

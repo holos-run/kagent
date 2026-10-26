@@ -1,3 +1,4 @@
+import { toRef } from "@/api/domain/common";
 import { useMemo } from "react";
 import { Alert, Button, Space, Table, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -46,8 +47,9 @@ export function UnmappedConversationsPage() {
     const known = new Set(agents.data.agents.map((agent) => agent.ref));
     const unreadable = new Set(agents.data.refused.map((entry) => entry.namespace));
     return (conversations.data ?? []).filter((instance) => {
-      if (unreadable.has(instance.agent?.split("/")[0] ?? "")) return false;
-      return !instance.agent || !known.has(instance.agent);
+      const { kind, namespace, name } = instance.source;
+      if (kind !== "Agent" || unreadable.has(namespace)) return false;
+      return !known.has(toRef(namespace, name));
     });
   }, [agents.data, conversations.data]);
 
@@ -86,7 +88,7 @@ export function UnmappedConversationsPage() {
       key: "agent",
       render: (_, row) => (
         <Text css={{ fontFamily: theme.font.mono, fontSize: 12 }}>
-          {row.agent ?? "not reported"}
+          {toRef(row.source.namespace, row.source.name)}
         </Text>
       ),
     },

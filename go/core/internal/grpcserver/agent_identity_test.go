@@ -64,7 +64,7 @@ func TestAgentIdentityGeneratedClient(t *testing.T) {
 	}
 	response, err := client.ResolveAgentIdentity(lookupContext(token), &apiv1.ResolveAgentIdentityRequest{})
 	require.NoError(t, err)
-	require.True(t, proto.Equal(&apiv1.AgentIdentity{Namespace: agent.Namespace, Name: agent.Name, Uid: string(agent.UID), Labels: agent.Labels, Annotations: agent.Annotations}, response.Agent))
+	require.True(t, proto.Equal(&apiv1.AgentIdentity{Kind: "Agent", Namespace: agent.Namespace, Name: agent.Name, Uid: string(agent.UID), Labels: agent.Labels, Annotations: agent.Annotations}, response.Agent))
 	require.Equal(t, session.Id, response.SessionId)
 	require.Equal(t, session.PreparedRevision, response.RuntimeRevision)
 	require.NotEmpty(t, response.RuntimeRevision)

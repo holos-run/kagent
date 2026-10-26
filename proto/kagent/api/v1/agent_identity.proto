@@ -13,14 +13,16 @@ service AgentIdentityService {
 
 message ResolveAgentIdentityRequest {}
 
-// AgentIdentity contains current metadata from the exact Agent UID bound to the
-// Actor's runtime revision. Labels and annotations are operator-controlled.
+// AgentIdentity contains current metadata from the exact source resource bound
+// to the Actor's runtime revision. Labels and annotations are operator-controlled.
 message AgentIdentity {
   string namespace = 1;
   string name = 2;
   string uid = 3;
   map<string, string> labels = 4;
   map<string, string> annotations = 5;
+  // Kubernetes resource providing the AgentSpec: Agent or ScheduledRun.
+  string kind = 6;
 }
 
 message ResolveAgentIdentityResponse {

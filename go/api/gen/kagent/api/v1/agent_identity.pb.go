@@ -57,15 +57,17 @@ func (*ResolveAgentIdentityRequest) Descriptor() ([]byte, []int) {
 	return file_kagent_api_v1_agent_identity_proto_rawDescGZIP(), []int{0}
 }
 
-// AgentIdentity contains current metadata from the exact Agent UID bound to the
-// Actor's runtime revision. Labels and annotations are operator-controlled.
+// AgentIdentity contains current metadata from the exact source resource bound
+// to the Actor's runtime revision. Labels and annotations are operator-controlled.
 type AgentIdentity struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Uid           string                 `protobuf:"bytes,3,opt,name=uid,proto3" json:"uid,omitempty"`
-	Labels        map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Annotations   map[string]string      `protobuf:"bytes,5,rep,name=annotations,proto3" json:"annotations,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Namespace   string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Name        string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Uid         string                 `protobuf:"bytes,3,opt,name=uid,proto3" json:"uid,omitempty"`
+	Labels      map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Annotations map[string]string      `protobuf:"bytes,5,rep,name=annotations,proto3" json:"annotations,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Kubernetes resource providing the AgentSpec: Agent or ScheduledRun.
+	Kind          string `protobuf:"bytes,6,opt,name=kind,proto3" json:"kind,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -135,6 +137,13 @@ func (x *AgentIdentity) GetAnnotations() map[string]string {
 	return nil
 }
 
+func (x *AgentIdentity) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
 type ResolveAgentIdentityResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Agent *AgentIdentity         `protobuf:"bytes,1,opt,name=agent,proto3" json:"agent,omitempty"`
@@ -202,13 +211,14 @@ var File_kagent_api_v1_agent_identity_proto protoreflect.FileDescriptor
 const file_kagent_api_v1_agent_identity_proto_rawDesc = "" +
 	"\n" +
 	"\"kagent/api/v1/agent_identity.proto\x12\rkagent.api.v1\"\x1d\n" +
-	"\x1bResolveAgentIdentityRequest\"\xe1\x02\n" +
+	"\x1bResolveAgentIdentityRequest\"\xf5\x02\n" +
 	"\rAgentIdentity\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x10\n" +
 	"\x03uid\x18\x03 \x01(\tR\x03uid\x12@\n" +
 	"\x06labels\x18\x04 \x03(\v2(.kagent.api.v1.AgentIdentity.LabelsEntryR\x06labels\x12O\n" +
-	"\vannotations\x18\x05 \x03(\v2-.kagent.api.v1.AgentIdentity.AnnotationsEntryR\vannotations\x1a9\n" +
+	"\vannotations\x18\x05 \x03(\v2-.kagent.api.v1.AgentIdentity.AnnotationsEntryR\vannotations\x12\x12\n" +
+	"\x04kind\x18\x06 \x01(\tR\x04kind\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a>\n" +

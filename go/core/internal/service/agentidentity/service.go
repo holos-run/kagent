@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	"github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
@@ -58,9 +59,9 @@ func (s *Service) Authenticate(ctx context.Context, headers http.Header) (contex
 	return context.WithValue(ctx, authenticatedActorKey{}, identity), nil
 }
 
-// Resolve requires an authenticated metadata credential. Both Actor and Agent
-// UIDs must still match the persisted binding; replacing an Agent with the same
-// name does not transfer metadata authority.
+// Resolve requires an authenticated metadata credential. Actor and source UIDs
+// must still match the persisted binding; recreating a source under the same name
+// does not transfer metadata authority.
 func (s *Service) Resolve(ctx context.Context) (*apiv1.ResolveAgentIdentityResponse, error) {
 	identity, ok := ctx.Value(authenticatedActorKey{}).(substrate.ActorIdentity)
 	if !ok {
@@ -84,24 +85,23 @@ func (s *Service) Resolve(ctx context.Context) (*apiv1.ResolveAgentIdentityRespo
 	if err != nil {
 		return nil, serviceerrors.NewInternal("Failed to resolve Agent identity", err)
 	}
-	if revision.AgentUID == "" || revision.Namespace == "" || revision.AgentName == "" ||
-		revision.Namespace != session.GetAgent().GetNamespace() || revision.AgentName != session.GetAgent().GetName() {
-		return nil, serviceerrors.NewInternal("Session has an invalid Agent identity", nil)
+	if err := revision.Validate(); err != nil || revision.Source != definition.FromSession(session) {
+		return nil, serviceerrors.NewInternal("Session has an invalid definition source", err)
 	}
 	metadata := &metav1.PartialObjectMetadata{}
-	metadata.SetGroupVersionKind(v1alpha3.GroupVersion.WithKind("Agent"))
-	if err := s.kube.Get(ctx, types.NamespacedName{Namespace: revision.Namespace, Name: revision.AgentName}, metadata); err != nil {
+	metadata.SetGroupVersionKind(v1alpha3.GroupVersion.WithKind(string(revision.Kind)))
+	if err := s.kube.Get(ctx, types.NamespacedName{Namespace: revision.Namespace, Name: revision.Name}, metadata); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, serviceerrors.NewNotFound("Agent identity is no longer available", nil)
 		}
 		return nil, serviceerrors.NewInternal("Failed to read Agent metadata", err)
 	}
-	if string(metadata.UID) != revision.AgentUID || !metadata.DeletionTimestamp.IsZero() {
+	if string(metadata.UID) != revision.UID || !metadata.DeletionTimestamp.IsZero() {
 		return nil, serviceerrors.NewNotFound("Agent identity is no longer available", nil)
 	}
 	return &apiv1.ResolveAgentIdentityResponse{
 		Agent: &apiv1.AgentIdentity{
-			Namespace:   metadata.Namespace,
+			Kind: string(revision.Kind), Namespace: metadata.Namespace,
 			Name:        metadata.Name,
 			Uid:         string(metadata.UID),
 			Labels:      metadata.Labels,

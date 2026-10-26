@@ -1,3 +1,4 @@
+import { toRef } from "@/api/domain/common";
 import { useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Alert, Button, Space, Table, Tag, Typography } from "antd";
@@ -77,7 +78,9 @@ export function AgentsTab() {
   const conversationCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const instance of conversations.data ?? []) {
-      if (instance.agent) counts.set(instance.agent, (counts.get(instance.agent) ?? 0) + 1);
+      if (instance.source.kind !== "Agent") continue;
+      const ref = toRef(instance.source.namespace, instance.source.name);
+      counts.set(ref, (counts.get(ref) ?? 0) + 1);
     }
     return counts;
   }, [conversations.data]);
@@ -94,9 +97,10 @@ export function AgentsTab() {
     const known = new Set(agents.map((agent) => agent.ref));
     const unreadable = new Set(definitions.data.refused.map((entry) => entry.namespace));
     return conversations.data.filter((instance) => {
-      const namespace = instance.agent?.split("/")[0];
-      if (namespace && (!readNamespaces.includes(namespace) || unreadable.has(namespace))) return false;
-      return !instance.agent || !known.has(instance.agent);
+      const { kind, namespace, name } = instance.source;
+      if (kind !== "Agent") return false;
+      if (!readNamespaces.includes(namespace) || unreadable.has(namespace)) return false;
+      return !known.has(toRef(namespace, name));
     }).length;
   }, [agents, conversations.data, definitions.data, readNamespaces]);
 

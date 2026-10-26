@@ -42,7 +42,7 @@ func TestCompileDefaultImageRevision(t *testing.T) {
 			secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "auth", Namespace: "test"}, Data: map[string][]byte{"key": []byte("secret")}}
 			compile := func(images *configv1.HarnessImagesConfig) *translator.CompileResult {
 				t.Helper()
-				result, err := compilerWithImages(t, images, model, secret, harness).CompileAgent(t.Context(), agent)
+				result, err := compileAgent(compilerWithImages(t, images, model, secret, harness), t.Context(), agent)
 				require.NoError(t, err)
 				return result
 			}

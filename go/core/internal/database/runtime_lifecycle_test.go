@@ -6,6 +6,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
+
+	"github.com/kagent-dev/kagent/go/api/definition"
 )
 
 func TestRuntimeLifecycleStoresSharedValues(t *testing.T) {
@@ -57,10 +59,7 @@ func TestAgentWritesRejectSandboxRevisions(t *testing.T) {
 	`)
 	require.NoError(t, err)
 	// Failed validation must roll back preparation changes and preserve the ready revision.
-	err = client.UpsertAgentDefinition(ctx, AgentDefinition{
-		Namespace: "team-a", AgentName: "assistant", AgentUID: "assistant-uid",
-		DesiredRevision: "sandbox-revision",
-	})
+	err = client.UpsertAgentDefinition(ctx, AgentDefinition{Source: definition.Source{Kind: definition.Agent, Namespace: "team-a", Name: "assistant", UID: "assistant-uid"}, DesiredRevision: "sandbox-revision"})
 	require.ErrorIs(t, err, ErrConflict)
 	var desired string
 	require.NoError(t, pool.QueryRow(ctx, "SELECT desired_revision FROM agent_definition").Scan(&desired))

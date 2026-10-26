@@ -1,10 +1,12 @@
 /** Reusable Harness and AgentTemplate resources used to define Agents. */
 
+import type { AgentInstance } from "../domain/agentInstances";
 import { apiClient } from "../client";
 import { type AgentTemplate } from "../domain/agentTemplates";
 import type { Harness } from "../domain/harnesses";
 import { type ApiResource, useApiResource } from "./useApiResource";
 import { useAgent } from "./useAgents";
+import { invoke } from "../operations";
 
 /**
  * The harnesses in one namespace, or in every observed namespace.
@@ -19,10 +21,13 @@ export function useHarnesses(namespace?: string): ApiResource<Harness[]> {
   );
 }
 
-/** Whether an Agent (`namespace/name`) takes files; undefined until known. Only the kagent harness does. */
-export function useAgentTakesFiles(ref?: string): boolean | undefined {
-  const [namespace, name] = ref?.split("/") ?? [];
-  const spec = useAgent(namespace, name).data?.resource.spec;
+/** Whether a definition takes files; undefined until known. Only the kagent harness does. */
+export function useAgentTakesFiles(source?: Pick<AgentInstance["source"], "kind" | "namespace" | "name">): boolean | undefined {
+  const { namespace, name, kind } = source ?? {};
+  const agent = useAgent(kind === "Agent" ? namespace : undefined, name);
+  const schedule = useApiResource(kind === "ScheduledRun" && namespace && name ? ["scheduledRuns.get", namespace, name] : null,
+    () => invoke("scheduledRuns.get", { ref: { namespace: namespace ?? "", name: name ?? "" } }));
+  const spec = kind === "ScheduledRun" ? schedule.data?.scheduledRun.spec.agent : agent.data?.resource.spec;
   const refName = spec?.harnessRef.name;
   const harnesses = useApiResource(refName ? ["harnesses.list", namespace] : null, () =>
     apiClient.agentBuildingBlocks.harnesses(namespace),

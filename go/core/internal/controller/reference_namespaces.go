@@ -13,31 +13,30 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/watch"
 
-	"github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/translator"
 )
 
 type namespaceDemand struct {
-	Agent     string
+	Source    string
 	Namespace string
 }
 
-// ResourceName keys demand by Agent so namespace watches can track each consumer.
-func (n namespaceDemand) ResourceName() string { return n.Agent }
+// ResourceName keys demand by source so namespace watches can track each consumer.
+func (n namespaceDemand) ResourceName() string { return n.Source }
 
-// newReferenceNamespaces observes only namespaces whose Agents consume Selector
+// newReferenceNamespaces observes only namespaces whose definitions consume Selector
 // policies. A field-selected list/watch permits resourceNames-scoped RBAC and
 // never makes Same/All references depend on cluster-wide Namespace permissions.
-// Agents in the same namespace share a watch, which stops when its last consumer
+// Definitions in the same namespace share a watch, which stops when its last consumer
 // leaves. Updating the returned KRT collection triggers dependent policy checks
 // with the latest namespace labels or observation error.
-func newReferenceNamespaces(client kube.Client, agents krt.Collection[*v1alpha3.Agent], inputs translator.Collections, opts krt.OptionsBuilder) krt.Collection[translator.NamespaceObservation] {
+func newReferenceNamespaces(client kube.Client, sources krt.Collection[definitionInput], inputs translator.Collections, opts krt.OptionsBuilder) krt.Collection[translator.NamespaceObservation] {
 	observations := krt.NewStaticCollection[translator.NamespaceObservation](nil, nil, opts.WithName("ReferenceNamespaces")...)
-	demands := krt.NewCollection(agents, func(ctx krt.HandlerContext, agent *v1alpha3.Agent) *namespaceDemand {
-		if !translator.AgentNeedsNamespace(ctx, inputs, agent) {
+	demands := krt.NewCollection(sources, func(ctx krt.HandlerContext, source definitionInput) *namespaceDemand {
+		if !translator.AgentSpecNeedsNamespace(ctx, inputs, source.Namespace, source.Spec) {
 			return nil
 		}
-		return &namespaceDemand{Agent: agent.Namespace + "/" + agent.Name, Namespace: agent.Namespace}
+		return &namespaceDemand{Source: source.Key(), Namespace: source.Namespace}
 	}, opts.WithName("ReferenceNamespaceDemand")...)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { <-opts.Stop(); cancel() }()
@@ -49,7 +48,7 @@ func newReferenceNamespaces(client kube.Client, agents krt.Collection[*v1alpha3.
 		defer mu.Unlock()
 		if event.Old != nil {
 			old := *event.Old
-			delete(consumers[old.Namespace], old.Agent)
+			delete(consumers[old.Namespace], old.Source)
 			if len(consumers[old.Namespace]) == 0 {
 				if stop := watchers[old.Namespace]; stop != nil {
 					stop()
@@ -63,7 +62,7 @@ func newReferenceNamespaces(client kube.Client, agents krt.Collection[*v1alpha3.
 			if consumers[demand.Namespace] == nil {
 				consumers[demand.Namespace] = map[string]bool{}
 			}
-			consumers[demand.Namespace][demand.Agent] = true
+			consumers[demand.Namespace][demand.Source] = true
 			if watchers[demand.Namespace] == nil {
 				watchCtx, stop := context.WithCancel(ctx)
 				watchers[demand.Namespace] = stop

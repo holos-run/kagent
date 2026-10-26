@@ -32,7 +32,7 @@ const listedConversation = (id: string, agent: string): AgentInstance => ({
   id,
   name: "",
   creator: "reader",
-  agent,
+  source: { kind: "Agent", namespace: agent.split("/")[0], name: agent.split("/")[1], uid: `uid-${agent}` },
   state: "ready",
   operation: "unspecified",
   createdAt: "",
@@ -45,6 +45,10 @@ const loadedList: ApiResource<AgentInstance[]> = {
     listedConversation("abc123", "default/alpha"),
     listedConversation("sibling456", "default/alpha"),
     listedConversation("other789", "default/beta"),
+    {
+      ...listedConversation("scheduled123", "default/alpha"),
+      source: { kind: "ScheduledRun", namespace: "default", name: "alpha", uid: "schedule-uid", executionId: "execution-id" },
+    },
   ],
   isLoading: false,
   isValidating: false,
@@ -63,6 +67,22 @@ function renderLoadingRail() {
 }
 
 describe("the agent rail while the conversation is being read", () => {
+  it("keeps scheduled conversations separate from an Agent with the same name", () => {
+    render(
+      <ThemeProvider theme={themeFor("dark")}>
+        <MemoryRouter initialEntries={["/agents/scheduled123/chat"]}>
+          <AgentRail instanceRef={{ id: "scheduled123" }} instances={loadedList} />
+        </MemoryRouter>
+      </ThemeProvider>,
+    );
+    expect(screen.getByTestId("agent-nav-agent-conversations")).toHaveAttribute(
+      "href", "/schedules/default%3Aalpha%3Aschedule-uid",
+    );
+    expect(screen.getByTestId("chat-session-scheduled123")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-session-abc123")).toBeNull();
+    expect(screen.getByTestId("chat-new-session")).toBeDisabled();
+  });
+
   it("draws the select-all box, and does not let it be used yet", () => {
     renderLoadingRail();
 
@@ -122,5 +142,6 @@ describe("the agent rail while the conversation is being read", () => {
     expect(screen.getByTestId("chat-session-abc123")).toBeInTheDocument();
     expect(screen.getByTestId("chat-session-sibling456")).toBeInTheDocument();
     expect(screen.queryByTestId("chat-session-other789")).toBeNull();
+    expect(screen.queryByTestId("chat-session-scheduled123")).toBeNull();
   });
 });

@@ -7,13 +7,14 @@ import (
 	"istio.io/istio/pkg/kube/krt"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	kagentv1alpha3 "github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/translator"
 )
 
 func newAgentStatuses(agents krt.Collection[*kagentv1alpha3.Agent], states krt.Collection[AgentReconciliation], opts krt.OptionsBuilder) krt.StatusCollection[*kagentv1alpha3.Agent, kagentv1alpha3.AgentStatus] {
 	statuses, _ := krt.NewStatusManyCollection(agents, func(ctx krt.HandlerContext, agent *kagentv1alpha3.Agent) (*kagentv1alpha3.AgentStatus, []AgentReconciliation) {
-		state := krt.FetchOne(ctx, states, krt.FilterKey(agent.Namespace+"/"+agent.Name))
+		state := krt.FetchOne(ctx, states, krt.FilterKey(string(definition.Agent)+"/"+agent.Namespace+"/"+agent.Name))
 		if state == nil {
 			return nil, nil
 		}

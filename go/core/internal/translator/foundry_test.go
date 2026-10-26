@@ -71,7 +71,7 @@ func TestCompileFoundryEndpoint(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{Name: "account", Namespace: "test"},
 					Data:       map[string]string{"endpoint": endpoint},
 				}
-				revision, err := compiler(t, append(objects, configMap)...).CompileAgent(t.Context(), inlineAgent(harness, template))
+				revision, err := compileAgent(compiler(t, append(objects, configMap)...), t.Context(), inlineAgent(harness, template))
 				require.NoError(t, err)
 				var config configv1.ADKConfig
 				require.NoError(t, runtimeconfig.Unmarshal(revision.ConfigJSON, &config))

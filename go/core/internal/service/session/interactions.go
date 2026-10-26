@@ -11,9 +11,9 @@ import (
 	a2atype "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/uuid"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/validation"
 
 	apia2a "github.com/kagent-dev/kagent/go/api/a2a"
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	"github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
@@ -23,6 +23,7 @@ import (
 )
 
 type interactionStore interface {
+	GetLatestSuccessfulRevision(context.Context, definition.Source) (string, error)
 	RegisterSessionPushNotification(context.Context, string, string, string, *a2atype.PushConfig) error
 	SaveTaskPushConfig(context.Context, string, string, *a2atype.PushConfig) error
 	GetTaskPushConfig(context.Context, string, string, string) (*database.TaskPushConfig, error)
@@ -38,6 +39,10 @@ type interactionStore interface {
 	SessionForTask(context.Context, string) (string, error)
 }
 
+type scheduledRunService interface {
+	Get(context.Context, types.NamespacedName) (*v1alpha3.ScheduledRun, error)
+}
+
 type agentService interface {
 	Get(context.Context, types.NamespacedName) (*v1alpha3.Agent, error)
 }
@@ -48,12 +53,13 @@ type agentService interface {
 type InteractionService struct {
 	store         interactionStore
 	agents        agentService
+	schedules     scheduledRunService
 	sessions      *Service
 	allowPushHTTP bool
 }
 
-func NewInteractionService(store interactionStore, agents agentService, sessions *Service, allowPushHTTP bool) *InteractionService {
-	return &InteractionService{store: store, agents: agents, sessions: sessions, allowPushHTTP: allowPushHTTP}
+func NewInteractionService(store interactionStore, agents agentService, schedules scheduledRunService, sessions *Service, allowPushHTTP bool) *InteractionService {
+	return &InteractionService{store: store, agents: agents, schedules: schedules, sessions: sessions, allowPushHTTP: allowPushHTTP}
 }
 
 // PreparedSend either grants a new dispatch or returns an already accepted task.
@@ -67,7 +73,7 @@ type PreparedSend struct {
 
 // storedSession keeps operation permissions and Agent membership checks private.
 // Callers request domain operations, never an arbitrary authorization verb.
-func (s *InteractionService) storedSession(ctx context.Context, verb auth.Verb, agent types.NamespacedName, contextID string) (*apiv1.Session, error) {
+func (s *InteractionService) storedSession(ctx context.Context, verb auth.Verb, agent definition.Reference, contextID string) (*apiv1.Session, error) {
 	if err := validateInteractionAgent(agent); err != nil {
 		return nil, err
 	}
@@ -75,13 +81,14 @@ func (s *InteractionService) storedSession(ctx context.Context, verb auth.Verb, 
 	if err != nil {
 		return nil, interactionError(ctx, err)
 	}
-	if session.GetAgent().GetNamespace() != agent.Namespace || session.GetAgent().GetName() != agent.Name {
+	source := definition.FromSession(session)
+	if source.Reference() != agent {
 		return nil, a2atype.NewError(a2atype.ErrUnauthorized, "context does not belong to this Agent")
 	}
 	return session, nil
 }
 
-func (s *InteractionService) GetTask(ctx context.Context, agent types.NamespacedName, req *a2atype.GetTaskRequest) (*a2atype.Task, error) {
+func (s *InteractionService) GetTask(ctx context.Context, agent definition.Reference, req *a2atype.GetTaskRequest) (*a2atype.Task, error) {
 	if req == nil {
 		return nil, a2atype.ErrInvalidParams
 	}
@@ -100,7 +107,7 @@ func (s *InteractionService) GetTask(ctx context.Context, agent types.Namespaced
 	return shapeTask(task, req.HistoryLength, true), nil
 }
 
-func (s *InteractionService) ListTasks(ctx context.Context, agent types.NamespacedName, req *a2atype.ListTasksRequest) (*a2atype.ListTasksResponse, error) {
+func (s *InteractionService) ListTasks(ctx context.Context, agent definition.Reference, req *a2atype.ListTasksRequest) (*a2atype.ListTasksResponse, error) {
 	if req == nil {
 		req = &a2atype.ListTasksRequest{}
 	}
@@ -138,7 +145,7 @@ func (s *InteractionService) ListTasks(ctx context.Context, agent types.Namespac
 
 // PrepareSend authorizes and resolves the conversation, then reserves its input.
 // An initial-message retry returns its saved task without granting another send.
-func (s *InteractionService) PrepareSend(ctx context.Context, agent types.NamespacedName, req *a2atype.SendMessageRequest) (*PreparedSend, error) {
+func (s *InteractionService) PrepareSend(ctx context.Context, agent definition.Reference, req *a2atype.SendMessageRequest) (*PreparedSend, error) {
 	initialID := initialMessageID(req)
 	pushConfig, err := initialPushConfig(agent, req, s.allowPushHTTP)
 	if err != nil {
@@ -180,7 +187,7 @@ func (s *InteractionService) PrepareSend(ctx context.Context, agent types.Namesp
 
 // PrepareCancelTask authorizes cancellation and returns the actor target and
 // committed task. A terminal task needs no actor call.
-func (s *InteractionService) PrepareCancelTask(ctx context.Context, agent types.NamespacedName, req *a2atype.CancelTaskRequest) (*apiv1.Session, *a2atype.Task, error) {
+func (s *InteractionService) PrepareCancelTask(ctx context.Context, agent definition.Reference, req *a2atype.CancelTaskRequest) (*apiv1.Session, *a2atype.Task, error) {
 	if req == nil {
 		return nil, nil, a2atype.ErrInvalidParams
 	}
@@ -189,14 +196,14 @@ func (s *InteractionService) PrepareCancelTask(ctx context.Context, agent types.
 
 // PrepareTaskSubscription resolves a read-authorized task. The gateway decides
 // whether to return this snapshot or subscribe to the actor's live stream.
-func (s *InteractionService) PrepareTaskSubscription(ctx context.Context, agent types.NamespacedName, req *a2atype.SubscribeToTaskRequest) (*apiv1.Session, *a2atype.Task, error) {
+func (s *InteractionService) PrepareTaskSubscription(ctx context.Context, agent definition.Reference, req *a2atype.SubscribeToTaskRequest) (*apiv1.Session, *a2atype.Task, error) {
 	if req == nil {
 		return nil, nil, a2atype.ErrInvalidParams
 	}
 	return s.prepareTask(ctx, agent, req.ID, auth.VerbGet)
 }
 
-func (s *InteractionService) prepareTask(ctx context.Context, agent types.NamespacedName, id a2atype.TaskID, verb auth.Verb) (*apiv1.Session, *a2atype.Task, error) {
+func (s *InteractionService) prepareTask(ctx context.Context, agent definition.Reference, id a2atype.TaskID, verb auth.Verb) (*apiv1.Session, *a2atype.Task, error) {
 	session, err := s.taskSession(ctx, agent, verb, id)
 	if err != nil {
 		return nil, nil, err
@@ -245,7 +252,7 @@ var ErrSendNotAccepted = a2atype.NewError(a2atype.ErrUnsupportedOperation, "inpu
 
 // RevokeSend releases an unused attempt. A true result proves that the input was
 // not accepted, allowing the gateway to distinguish rejection from uncertainty.
-func (s *InteractionService) RevokeSend(ctx context.Context, agent types.NamespacedName, message *a2atype.Message, id uuid.UUID) (bool, error) {
+func (s *InteractionService) RevokeSend(ctx context.Context, agent definition.Reference, message *a2atype.Message, id uuid.UUID) (bool, error) {
 	session, err := s.messageSession(ctx, agent, message)
 	if err != nil {
 		return false, err
@@ -259,7 +266,7 @@ func (s *InteractionService) RevokeSend(ctx context.Context, agent types.Namespa
 
 // GetTaskByMessage reads only the task that accepted this input. It uses the
 // send's permissions and Session scope, so recovery cannot expose another task.
-func (s *InteractionService) GetTaskByMessage(ctx context.Context, agent types.NamespacedName, message *a2atype.Message) (*a2atype.Task, error) {
+func (s *InteractionService) GetTaskByMessage(ctx context.Context, agent definition.Reference, message *a2atype.Message) (*a2atype.Task, error) {
 	session, err := s.messageSession(ctx, agent, message)
 	if err != nil {
 		return nil, err
@@ -273,7 +280,7 @@ func (s *InteractionService) GetTaskByMessage(ctx context.Context, agent types.N
 
 // GetSettledTask waits for an already staged save to be published after native
 // cleanup. It only reads persistence; it cannot wake or contact the actor.
-func (s *InteractionService) GetSettledTask(ctx context.Context, agent types.NamespacedName, sessionID string, taskID a2atype.TaskID, historyLength *int) (*a2atype.Task, error) {
+func (s *InteractionService) GetSettledTask(ctx context.Context, agent definition.Reference, sessionID string, taskID a2atype.TaskID, historyLength *int) (*a2atype.Task, error) {
 	session, err := s.storedSession(ctx, auth.VerbGet, agent, sessionID)
 	if err != nil {
 		return nil, err
@@ -284,7 +291,7 @@ func (s *InteractionService) GetSettledTask(ctx context.Context, agent types.Nam
 // GetSendResult reads the committed response using the original send's permission.
 // A create-only caller does not need an additional read or update grant merely
 // because the gateway must recover its response from storage.
-func (s *InteractionService) GetSendResult(ctx context.Context, agent types.NamespacedName, message *a2atype.Message, taskID a2atype.TaskID, historyLength *int) (*a2atype.Task, error) {
+func (s *InteractionService) GetSendResult(ctx context.Context, agent definition.Reference, message *a2atype.Message, taskID a2atype.TaskID, historyLength *int) (*a2atype.Task, error) {
 	session, err := s.messageSession(ctx, agent, message)
 	if err != nil {
 		return nil, err
@@ -296,7 +303,7 @@ func (s *InteractionService) GetSendResult(ctx context.Context, agent types.Name
 }
 
 // GetCancelResult reads a cancellation's committed result using cancel authority.
-func (s *InteractionService) GetCancelResult(ctx context.Context, agent types.NamespacedName, taskID a2atype.TaskID) (*a2atype.Task, error) {
+func (s *InteractionService) GetCancelResult(ctx context.Context, agent definition.Reference, taskID a2atype.TaskID) (*a2atype.Task, error) {
 	session, err := s.taskSession(ctx, agent, auth.VerbUpdate, taskID)
 	if err != nil {
 		return nil, err
@@ -306,7 +313,7 @@ func (s *InteractionService) GetCancelResult(ctx context.Context, agent types.Na
 
 // messageSession rechecks send authority without creating a Session or requiring
 // runtime readiness. Cleanup and recovery must also work after lifecycle changes.
-func (s *InteractionService) messageSession(ctx context.Context, agent types.NamespacedName, message *a2atype.Message) (*apiv1.Session, error) {
+func (s *InteractionService) messageSession(ctx context.Context, agent definition.Reference, message *a2atype.Message) (*apiv1.Session, error) {
 	if message == nil || message.ID == "" {
 		return nil, a2atype.ErrInvalidParams
 	}
@@ -348,7 +355,7 @@ func (s *InteractionService) awaitBoundary(ctx context.Context, sessionID string
 	}
 }
 
-func (s *InteractionService) GetAgentCard(ctx context.Context, ref types.NamespacedName) (*a2atype.AgentCard, error) {
+func (s *InteractionService) GetAgentCard(ctx context.Context, ref definition.Reference) (*a2atype.AgentCard, error) {
 	if err := validateInteractionAgent(ref); err != nil {
 		return nil, err
 	}
@@ -359,8 +366,17 @@ func (s *InteractionService) GetAgentCard(ctx context.Context, ref types.Namespa
 			return nil, err
 		}
 		revisionID = session.PreparedRevision
+	} else if ref.Kind == definition.ScheduledRun {
+		schedule, err := s.schedules.Get(ctx, ref.NamespacedName())
+		if err != nil {
+			return nil, interactionError(ctx, err)
+		}
+		revisionID, err = s.store.GetLatestSuccessfulRevision(ctx, definition.Source{Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name, UID: string(schedule.UID)})
+		if err != nil {
+			return nil, interactionStoreError(ctx, err)
+		}
 	} else {
-		agent, err := s.agents.Get(ctx, ref)
+		agent, err := s.agents.Get(ctx, ref.NamespacedName())
 		if err != nil {
 			return nil, interactionError(ctx, err)
 		}
@@ -382,7 +398,7 @@ func (s *InteractionService) GetAgentCard(ctx context.Context, ref types.Namespa
 	return card, nil
 }
 
-func (s *InteractionService) resolveSend(ctx context.Context, agent types.NamespacedName, req *a2atype.SendMessageRequest) (*apiv1.Session, error) {
+func (s *InteractionService) resolveSend(ctx context.Context, agent definition.Reference, req *a2atype.SendMessageRequest) (*apiv1.Session, error) {
 	if req == nil || req.Message == nil || req.Message.ID == "" {
 		return nil, a2atype.ErrInvalidParams
 	}
@@ -396,7 +412,10 @@ func (s *InteractionService) resolveSend(ctx context.Context, agent types.Namesp
 	case req.Message.TaskID != "" || req.Message.ContextID != "":
 		session, err = s.messageSession(ctx, agent, req.Message)
 	default:
-		if _, err = s.agents.Get(ctx, agent); err != nil {
+		if agent.Kind != definition.Agent {
+			return nil, a2atype.NewError(a2atype.ErrInvalidRequest, "ScheduledRun messages require an existing context or task")
+		}
+		if _, err = s.agents.Get(ctx, agent.NamespacedName()); err != nil {
 			return nil, interactionError(ctx, err)
 		}
 		// Session creation already deduplicates request IDs per authenticated creator.
@@ -445,7 +464,7 @@ func (s *InteractionService) acceptedTask(ctx context.Context, sessionID, messag
 	return shapeTask(task, historyLength, true), nil
 }
 
-func (s *InteractionService) taskSession(ctx context.Context, agent types.NamespacedName, verb auth.Verb, taskID a2atype.TaskID) (*apiv1.Session, error) {
+func (s *InteractionService) taskSession(ctx context.Context, agent definition.Reference, verb auth.Verb, taskID a2atype.TaskID) (*apiv1.Session, error) {
 	if err := validateInteractionAgent(agent); err != nil {
 		return nil, err
 	}
@@ -462,7 +481,7 @@ func (s *InteractionService) taskSession(ctx context.Context, agent types.Namesp
 	return s.storedSession(ctx, verb, agent, id)
 }
 
-func (s *InteractionService) listSessions(ctx context.Context, agent types.NamespacedName, contextID string) ([]string, error) {
+func (s *InteractionService) listSessions(ctx context.Context, agent definition.Reference, contextID string) ([]string, error) {
 	if err := validateInteractionAgent(agent); err != nil {
 		return nil, err
 	}
@@ -474,7 +493,7 @@ func (s *InteractionService) listSessions(ctx context.Context, agent types.Names
 		return []string{session.Id}, nil
 	}
 	ids := []string{}
-	request := ListRequest{Agent: &apiv1.ResourceReference{Namespace: agent.Namespace, Name: agent.Name}, PageSize: 100}
+	request := ListRequest{Source: &agent, PageSize: 100}
 	for {
 		page, err := s.sessions.List(ctx, request)
 		if err != nil {
@@ -530,8 +549,8 @@ func decodeTaskPageToken(token string) (string, error) {
 
 // A missing Agent must never turn a task list into an unfiltered Session query.
 // Direct service callers receive the same validation as transport callers.
-func validateInteractionAgent(agent types.NamespacedName) error {
-	if len(validation.IsDNS1123Label(agent.Namespace)) != 0 || len(validation.IsDNS1123Subdomain(agent.Name)) != 0 {
+func validateInteractionAgent(agent definition.Reference) error {
+	if agent.Validate() != nil {
 		return a2atype.NewError(a2atype.ErrInvalidRequest, "Agent namespace and name are required and must be valid")
 	}
 	return nil

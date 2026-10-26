@@ -23,6 +23,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 
 	kagentclient "github.com/kagent-dev/kagent/go/api/clientset/versioned/typed/api/v1alpha3"
+	"github.com/kagent-dev/kagent/go/api/definition"
 	configv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/config/v1"
 	kagentv1alpha3 "github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
@@ -39,7 +40,8 @@ import (
 // Agent. Compilation failures are data so invalid Agents still produce
 // status instead of disappearing from the graph.
 type AgentReconciliation struct {
-	Agent                 *kagentv1alpha3.Agent
+	Source                definition.Source
+	Deleting              bool
 	EgressGrant           egress.Access // Requested union, including conflicting grants.
 	EgressIssues          []translator.EgressGrantIssue
 	EgressConflict        string
@@ -66,7 +68,7 @@ func (c *compiledTarget) equals(other *compiledTarget) bool {
 		proto.Equal(c.ActorTemplate, other.ActorTemplate)
 }
 
-func (r AgentReconciliation) ResourceName() string { return r.Agent.Namespace + "/" + r.Agent.Name }
+func (r AgentReconciliation) ResourceName() string { return r.Source.Key() }
 
 var _ krt.Equaler[AgentReconciliation] = AgentReconciliation{}
 
@@ -97,16 +99,16 @@ type ReconciliationFailure struct {
 }
 
 func newAgentReconciliations(
-	agents krt.Collection[*kagentv1alpha3.Agent],
+	sources krt.Collection[definitionInput],
 	collections translator.Collections,
 	agentRuntimeObservations krt.Collection[AgentRuntimeObservation],
 	opts krt.OptionsBuilder,
 	settings *configv1.RuntimeDefaultsConfig,
 	images *configv1.HarnessImagesConfig,
 ) krt.Collection[AgentReconciliation] {
-	return krt.NewCollection(agents, func(ctx krt.HandlerContext, agent *kagentv1alpha3.Agent) *AgentReconciliation {
-		state := &AgentReconciliation{Agent: agent}
-		if !agent.DeletionTimestamp.IsZero() {
+	return krt.NewCollection(sources, func(ctx krt.HandlerContext, agent definitionInput) *AgentReconciliation {
+		state := &AgentReconciliation{Source: agent.Source, Deleting: agent.Deleting}
+		if agent.Deleting {
 			return state
 		}
 		resolution := translator.CompileEgressPolicies(ctx, collections, agent.Namespace, agent.Spec.EgressPolicyRefs)
@@ -150,13 +152,13 @@ func newAgentReconciliations(
 	}, opts.WithName("AgentReconciliations")...)
 }
 
-func compileAgentTarget(ctx krt.HandlerContext, collections translator.Collections, agent *kagentv1alpha3.Agent, settings *configv1.RuntimeDefaultsConfig, images *configv1.HarnessImagesConfig) (*compiledTarget, []string, *ReconciliationFailure) {
+func compileAgentTarget(ctx krt.HandlerContext, collections translator.Collections, agent definitionInput, settings *configv1.RuntimeDefaultsConfig, images *configv1.HarnessImagesConfig) (*compiledTarget, []string, *ReconciliationFailure) {
 	compilation, err := translator.NewCompiler(ctx, collections, map[translator.HarnessType]translator.HarnessCompiler{
 		translator.HarnessTypeKagent: kagenttranslator.NewCompiler(ctx, collections, settings),
 		translator.HarnessTypeCodex:  codextranslator.NewCompiler(ctx, collections, settings),
 		translator.HarnessTypeClaude: claudetranslator.NewCompiler(ctx, collections, settings),
 		translator.HarnessTypeBYO:    byotranslator.NewCompiler(ctx, collections, settings),
-	}, images, settings).CompileAgent(context.Background(), agent)
+	}, images, settings).CompileAgent(context.Background(), agent.Source, agent.Spec)
 	if err != nil {
 		return nil, nil, compilationFailure(err)
 	}
@@ -195,10 +197,10 @@ func compilationFailure(err error) *ReconciliationFailure {
 type runtimeRevisionStore interface {
 	actorEgressStore
 	UpsertAgentDefinition(context.Context, database.AgentDefinition) error
-	GetAgentEgressGrant(context.Context, string, string) (egress.Access, error)
+	GetAgentEgressGrant(context.Context, definition.Source) (egress.Access, error)
 	RecordRuntimeRevision(context.Context, database.RuntimeRevision, database.RecordRevisionOptions) error
 	ListAgentEgressSources(context.Context) ([]database.RuntimeEgressSource, error)
-	RetireAgentIdentities(ctx context.Context, namespace, name string) error
+	RetireAgentIdentities(ctx context.Context, kind definition.Kind, namespace, name string) error
 }
 
 type actorTemplateClient interface {
@@ -259,11 +261,11 @@ func newReconciler(
 	r.agentHandler = collections.Reconciliations.Register(func(event krt.Event[AgentReconciliation]) {
 		// Desired inputs and cleanup changes bypass failure backoff; observations
 		// and status writes do not. Grants must reconcile without a new revision.
-		if event.Old != nil && event.New != nil && event.Old.Agent.UID == event.New.Agent.UID &&
+		if event.Old != nil && event.New != nil && event.Old.Source == event.New.Source &&
 			event.Old.desiredRevision() == event.New.desiredRevision() &&
 			reflect.DeepEqual(event.Old.EgressGrant, event.New.EgressGrant) &&
 			reflect.DeepEqual(event.Old.EgressIssues, event.New.EgressIssues) &&
-			event.Old.EgressConflict == event.New.EgressConflict && event.Old.Agent.DeletionTimestamp.Equal(event.New.Agent.DeletionTimestamp) {
+			event.Old.EgressConflict == event.New.EgressConflict && event.Old.Deleting == event.New.Deleting {
 			return
 		}
 		r.agents.Add(krt.GetKey(event.Latest()))
@@ -327,8 +329,8 @@ func (r *Reconciler) enqueueDeletedAgents(ctx context.Context) error {
 		if len(r.collections.watchNamespaces) != 0 && !slices.Contains(r.collections.watchNamespaces, source.Namespace) {
 			continue
 		}
-		key := source.Namespace + "/" + source.Name
-		if r.collections.Agents.GetKey(key) == nil {
+		key := string(source.Kind) + "/" + source.Namespace + "/" + source.Name
+		if r.collections.Reconciliations.GetKey(key) == nil {
 			r.agents.Add(key)
 		}
 	}
@@ -361,23 +363,23 @@ func (r *Reconciler) reconcileAgent(ctx context.Context, key string) error {
 		(state == nil || state.Target == nil || observation.RevisionID != state.Target.RevisionID) {
 		r.collections.AgentRuntimeObservations.DeleteObject(key)
 	}
-	if state == nil || !state.Agent.DeletionTimestamp.IsZero() {
+	if state == nil || state.Deleting {
 		parts := strings.Split(key, "/")
-		if len(parts) != 2 {
+		if len(parts) != 3 {
 			return fmt.Errorf("invalid Agent key %q", key)
 		}
-		err := r.store.RetireAgentIdentities(ctx, parts[0], parts[1])
+		err := r.store.RetireAgentIdentities(ctx, definition.Kind(parts[0]), parts[1], parts[2])
 		if err != nil {
 			return fmt.Errorf("retire Agent %s: %w", key, err)
 		}
-		if err := applySourceEgress(ctx, r.store, r.templates, database.RuntimeEgressSource{Kind: database.RuntimeEgressAgent, Namespace: parts[0], Name: parts[1]}); err != nil {
+		if err := applySourceEgress(ctx, r.store, r.templates, database.RuntimeEgressSource{Kind: database.RuntimeEgressSourceKind(parts[0]), Namespace: parts[1], Name: parts[2]}); err != nil {
 			return err
 		}
 		return nil
 	}
 	grants := state.EgressGrant
 	if state.EgressConflict != "" {
-		previous, err := r.store.GetAgentEgressGrant(ctx, state.Agent.Namespace, string(state.Agent.UID))
+		previous, err := r.store.GetAgentEgressGrant(ctx, state.Source)
 		if err != nil {
 			return r.observePreparationError(*state, fmt.Errorf("read Agent %s grants: %w", key, err))
 		}
@@ -389,8 +391,7 @@ func (r *Reconciler) reconcileAgent(ctx context.Context, key string) error {
 		}
 	}
 	definition := database.AgentDefinition{
-		Namespace: state.Agent.Namespace, AgentName: state.Agent.Name,
-		AgentUID: string(state.Agent.UID), DesiredRevision: state.desiredRevision(), EgressGrant: grants,
+		Source: state.Source, DesiredRevision: state.desiredRevision(), EgressGrant: grants,
 	}
 
 	// Store the desired edge before creating compute so a concurrent collector
@@ -400,7 +401,7 @@ func (r *Reconciler) reconcileAgent(ctx context.Context, key string) error {
 	if err := r.store.UpsertAgentDefinition(ctx, definition); err != nil {
 		return r.observePreparationError(*state, fmt.Errorf("store Agent %s: %w", key, err))
 	}
-	if err := applySourceEgress(ctx, r.store, r.templates, database.RuntimeEgressSource{Kind: database.RuntimeEgressAgent, Namespace: definition.Namespace, Name: definition.AgentName}); err != nil {
+	if err := applySourceEgress(ctx, r.store, r.templates, database.RuntimeEgressSource{Kind: database.RuntimeEgressSourceKind(definition.Kind), Namespace: definition.Namespace, Name: definition.Name}); err != nil {
 		return r.observePreparationError(*state, err)
 	}
 	if state.Target == nil {
@@ -440,8 +441,7 @@ func (r *Reconciler) reconcileAgent(ctx context.Context, key string) error {
 	}
 
 	revision := database.RuntimeRevision{
-		Revision: target.RevisionID.String(), Namespace: definition.Namespace,
-		AgentName: definition.AgentName, AgentUID: definition.AgentUID,
+		Revision: target.RevisionID.String(), Source: definition.Source,
 		SourceSnapshot: target.Revision.Provenance, AgentCard: target.Revision.AgentCard,
 		EgressDestinations:      target.Revision.EgressDestinations,
 		Credentials:             target.Revision.Credentials,
@@ -487,7 +487,7 @@ func runtimePreparationFailure(err error) *ReconciliationFailure {
 // long sessions or checkpoints keep its old runtime alive in the database.
 func (r *Reconciler) observePreparation(state AgentReconciliation, template *ateapipb.ActorTemplate, failure *ReconciliationFailure) {
 	r.collections.AgentRuntimeObservations.ConditionalUpdateObject(AgentRuntimeObservation{
-		Namespace: state.Agent.Namespace, AgentName: state.Agent.Name,
+		Source:     state.Source,
 		RevisionID: state.Target.RevisionID,
 		Template:   template,
 		Failure:    failure,
@@ -529,10 +529,15 @@ func (r *Reconciler) reconcileModelConfigStatus(ctx context.Context, key string)
 }
 
 func statusWithTransitionTimes(desired, current kagentv1alpha3.AgentStatus) kagentv1alpha3.AgentStatus {
-	desired.Conditions = append([]metav1.Condition(nil), desired.Conditions...)
-	for i := range desired.Conditions {
-		condition := &desired.Conditions[i]
-		previous := apimeta.FindStatusCondition(current.Conditions, condition.Type)
+	desired.Conditions = conditionsWithTransitionTimes(desired.Conditions, current.Conditions)
+	return desired
+}
+
+func conditionsWithTransitionTimes(desired, current []metav1.Condition) []metav1.Condition {
+	desired = slices.Clone(desired)
+	for i := range desired {
+		condition := &desired[i]
+		previous := apimeta.FindStatusCondition(current, condition.Type)
 		if previous != nil && previous.Status == condition.Status {
 			condition.LastTransitionTime = previous.LastTransitionTime
 		} else {

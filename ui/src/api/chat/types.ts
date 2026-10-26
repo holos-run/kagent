@@ -8,6 +8,8 @@
  * one implementation of `ChatClient` and touches nothing that renders.
  */
 
+import type { AgentInstance } from "../domain/agentInstances";
+
 import type { AskUserRecord, PendingRequest, ToolApprovalRecord } from "./hitl";
 
 export type ChatRole = "user" | "agent";
@@ -106,7 +108,7 @@ export type ChatEvent =
 export interface ChatConversationRef {
   /** The Session UUID, also its A2A conversation ID. */
   id: string;
-  /** Agent selected for A2A routing, as namespace/name. */
+  /** Definition tenant: namespace/name for Agents, ScheduledRun/namespace/name for schedules. */
   agent: string;
   /** The Session conversation ID. */
   contextId?: string;
@@ -207,4 +209,10 @@ export interface ChatClient {
   send(input: SendMessageInput): AsyncIterable<ChatEvent>;
   /** Asks the agent to stop the named turn. */
   cancel(conversation: ChatConversationRef, taskId: string): Promise<void>;
+}
+
+/** The transport route retains the source kind even when names coincide. */
+export function sessionTenant(source: AgentInstance["source"]): string {
+  const name = `${source.namespace}/${source.name}`;
+  return source.kind === "ScheduledRun" ? `ScheduledRun/${name}` : name;
 }

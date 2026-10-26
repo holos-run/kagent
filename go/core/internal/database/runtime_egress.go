@@ -45,7 +45,7 @@ func (c *Client) GetRuntimeEgressPolicy(ctx context.Context, revision string) (e
   FROM runtime_revision r
   LEFT JOIN agent_revision a ON r.kind = 'agent' AND a.revision = r.revision
   LEFT JOIN sandbox_revision s ON r.kind = 'sandbox' AND s.revision = r.revision
-  LEFT JOIN agent_definition ad ON ad.namespace = r.namespace AND ad.agent_uid = a.agent_uid AND ad.retired_at IS NULL
+  LEFT JOIN agent_definition ad ON ad.namespace = r.namespace AND ad.agent_uid = a.agent_uid AND ad.source_kind = a.source_kind AND ad.retired_at IS NULL
   LEFT JOIN sandbox_template_definition sd ON sd.namespace = r.namespace AND sd.sandbox_template_uid = s.sandbox_template_uid AND sd.retired_at IS NULL
   WHERE r.revision = $1 AND r.deleted_at IS NULL
     AND (a.revision IS NOT NULL OR s.revision IS NOT NULL)
@@ -70,8 +70,9 @@ var _ egress.PolicyStore = (*Client)(nil)
 type RuntimeEgressSourceKind string
 
 const (
-	RuntimeEgressAgent   RuntimeEgressSourceKind = runtimeKindAgent
-	RuntimeEgressSandbox RuntimeEgressSourceKind = runtimeKindSandbox
+	RuntimeEgressScheduledRun RuntimeEgressSourceKind = "ScheduledRun"
+	RuntimeEgressAgent        RuntimeEgressSourceKind = "Agent"
+	RuntimeEgressSandbox      RuntimeEgressSourceKind = "SandboxTemplate"
 )
 
 // RuntimeEgressSource includes former UIDs whose grants must be revoked on recreation.
@@ -99,7 +100,7 @@ func (c *Client) ListRuntimeEgressSourceTargets(ctx context.Context, source Runt
 		return nil, fmt.Errorf("runtime egress source requires namespace and name")
 	}
 	switch source.Kind {
-	case RuntimeEgressAgent:
+	case RuntimeEgressAgent, RuntimeEgressScheduledRun:
 		return queryMany(ctx, c.db, `
   SELECT i.id::text AS id, i.prepared_revision AS revision, r.namespace,
     r.actor_template_atespace AS atespace, r.actor_template_name AS template_name,
@@ -108,12 +109,12 @@ func (c *Client) ListRuntimeEgressSourceTargets(ctx context.Context, source Runt
   JOIN runtime_revision r ON r.revision = i.prepared_revision
   JOIN agent_revision a ON a.revision = r.revision
   JOIN session s ON s.id = i.id
-  WHERE i.kind = 'agent' AND r.kind = 'agent' AND r.namespace = $1 AND a.agent_name = $2
+  WHERE i.kind = 'agent' AND r.kind = 'agent' AND r.namespace = $1 AND a.agent_name = $2 AND a.source_kind = $5
     AND (i.operation <> 'RUNTIME_OPERATION_CREATE' OR i.executor_id IS NOT NULL)
     AND i.state <> 'RUNTIME_STATE_DELETED' AND i.operation <> 'RUNTIME_OPERATION_DELETE'
     AND i.id > COALESCE(NULLIF($3, '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
   ORDER BY i.id LIMIT $4
- `, pgx.RowToStructByName[RuntimeEgressTarget], source.Namespace, source.Name, afterID, limit)
+ `, pgx.RowToStructByName[RuntimeEgressTarget], source.Namespace, source.Name, afterID, limit, source.Kind)
 	case RuntimeEgressSandbox:
 		return queryMany(ctx, c.db, `
   SELECT i.id::text AS id, i.prepared_revision AS revision, r.namespace,

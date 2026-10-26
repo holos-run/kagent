@@ -22,8 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 	ateapipb "go.ate.dev/substrate/api/ateapi/v1"
 	"google.golang.org/protobuf/proto"
-	"k8s.io/apimachinery/pkg/types"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	runtimev1 "github.com/kagent-dev/kagent/go/api/gen/kagent/runtime/v1"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
@@ -31,7 +31,7 @@ import (
 )
 
 func TestEmbeddedPushConfig(t *testing.T) {
-	agent := types.NamespacedName{Namespace: "team", Name: "agent"}
+	agent := definition.Reference{Kind: definition.Agent, Namespace: "team", Name: "agent"}
 	for _, test := range []struct {
 		name   string
 		change func(*a2a.SendMessageRequest)
@@ -78,7 +78,7 @@ func TestEmbeddedPushConfig(t *testing.T) {
 }
 
 func TestPushRequiresHTTPSWhenHTTPDisabled(t *testing.T) {
-	agent := types.NamespacedName{Namespace: "team", Name: "agent"}
+	agent := definition.Reference{Kind: definition.Agent, Namespace: "team", Name: "agent"}
 	config := &a2a.PushConfig{URL: "http://receiver/callback"}
 	_, err := validatePushConfig(agent, config, false)
 	require.ErrorIs(t, err, a2a.ErrInvalidParams)
@@ -852,7 +852,7 @@ func TestPushWorkerConcurrentHTTPDelivery(t *testing.T) {
 		t.Fatal("slow HTTP delivery did not start")
 	}
 	// Publish another task only after the slow request is in flight.
-	fastSession, _, err := store.CreateSession(t.Context(), &apiv1.Session{Id: uuid.NewString(), Creator: "alice", Agent: session.Agent}, uuid.NewString())
+	fastSession, _, err := store.CreateSession(t.Context(), &apiv1.Session{Id: uuid.NewString(), Creator: "alice", Source: &apiv1.Session_Agent{Agent: session.GetAgent()}}, uuid.NewString())
 	require.NoError(t, err)
 	fastSession, err = creator.Create(t.Context(), fastSession)
 	require.NoError(t, err)
@@ -880,7 +880,7 @@ func TestPushWorkersDrainAcrossReplicas(t *testing.T) {
 		session := first
 		if i != 0 {
 			var err error
-			session, _, err = store.CreateSession(t.Context(), &apiv1.Session{Id: uuid.NewString(), Creator: "alice", Agent: first.Agent}, uuid.NewString())
+			session, _, err = store.CreateSession(t.Context(), &apiv1.Session{Id: uuid.NewString(), Creator: "alice", Source: &apiv1.Session_Agent{Agent: first.GetAgent()}}, uuid.NewString())
 			require.NoError(t, err)
 		}
 		session, err := creator.Create(t.Context(), session)

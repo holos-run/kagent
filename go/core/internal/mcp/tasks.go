@@ -16,6 +16,7 @@ import (
 
 	adka2a "github.com/kagent-dev/kagent/go/adk/pkg/a2a"
 	apia2a "github.com/kagent-dev/kagent/go/api/a2a"
+	"github.com/kagent-dev/kagent/go/api/definition"
 )
 
 const tasksExtension = "io.modelcontextprotocol/tasks"
@@ -228,7 +229,8 @@ func (h *Handler) resolveTask(ctx context.Context, id string) (taskReference, st
 	if err != nil {
 		return taskReference{}, "", nil, err
 	}
-	tenant := session.GetAgent().GetNamespace() + "/" + session.GetAgent().GetName()
+	source := definition.FromSession(session)
+	tenant := source.Reference().Tenant()
 	task, err := h.gateway.GetTask(
 		interactionContext(ctx),
 		&a2atype.GetTaskRequest{Tenant: tenant, ID: a2atype.TaskID(ref.TaskID)},

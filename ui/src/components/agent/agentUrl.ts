@@ -1,3 +1,4 @@
+import type { AgentInstance } from "@/api/domain/agentInstances";
 import { paths } from "@/router/routes";
 
 /** A conversation identified by UUID. */
@@ -32,4 +33,13 @@ export function agentPageUrl(ref: Partial<AgentRef>): string | undefined {
 export function agentNewChatUrl(ref: Partial<AgentRef>): string | undefined {
  const base = agentPageUrl(ref);
  return base ? `${base}/new` : undefined;
+}
+
+/** The Kubernetes resource whose spec produced this conversation's revision. */
+export function instanceSourceUrl(instance?: AgentInstance): string | undefined {
+ const source = instance?.source;
+ if (source?.kind === "ScheduledRun") {
+  return paths.scheduledRun.replace(":id", encodeURIComponent(`${source.namespace}:${source.name}:${source.uid}`));
+ }
+ return source ? agentPageUrl(source) : undefined;
 }

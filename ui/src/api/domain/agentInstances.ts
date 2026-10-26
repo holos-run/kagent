@@ -77,7 +77,7 @@ export interface AgentInstanceFailure {
  *
  * An instance owns one A2A context and an isolated history, so it holds exactly one
  * thread of turns and a second conversation with the same agent is a second
- * instance. The durable, runnable agent is the `Agent` it was started from.
+ * instance. Its source records the Agent or ScheduledRun it was started from.
  */
 export interface AgentInstance {
   /** A UUID. The controller rejects anything else — `validateIdentity` parses it. */
@@ -87,17 +87,21 @@ export interface AgentInstance {
   /**
    * The reader's own title for this conversation. Empty means unnamed.
    *
-   * Empty is ordinary rather than a gap: the column was added after the table
-   * existed, so every conversation created before it reads back empty, and
-   * `CreateAgentInstance` still accepts a create with no name. Never render it raw
+   * `CreateSession` accepts a create with no name. Never render it raw
    * — `conversationTitle` in `components/agent-instances/instanceLabels` is what
    * turns it, or its absence, into something to put on screen.
    */
   name: string;
   /** Who created it. Empty on a cluster with no authentication in front. */
   creator: string;
-  /** `namespace/name` of the Agent it was created from, when recorded. */
-  agent?: string;
+  /** Kubernetes definition that supplied the pinned agent behavior. */
+  source: {
+    kind: "Agent" | "ScheduledRun";
+    namespace: string;
+    name: string;
+    uid: string;
+    executionId?: string;
+  };
   /** The runtime revision this instance was prepared against. */
   preparedRevision?: string;
   /** Where its A2A endpoint is served, for a caller that wants to reach it. */

@@ -47,13 +47,14 @@ CREATE TABLE runtime_revision (
 );
 
 CREATE TABLE agent_revision (
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('Agent', 'ScheduledRun')),
     revision TEXT PRIMARY KEY,
     agent_name TEXT NOT NULL,
     agent_uid TEXT NOT NULL,
     agent_card BYTEA NOT NULL,
     FOREIGN KEY (revision) REFERENCES runtime_revision(revision) ON DELETE CASCADE
 );
-CREATE INDEX agent_revision_source_idx ON agent_revision (agent_name, revision);
+CREATE INDEX agent_revision_source_idx ON agent_revision (source_kind, agent_name, revision);
 
 CREATE TABLE sandbox_revision (
     revision TEXT PRIMARY KEY,
@@ -64,6 +65,7 @@ CREATE TABLE sandbox_revision (
 CREATE INDEX sandbox_revision_source_idx ON sandbox_revision (sandbox_template_name, revision);
 
 CREATE TABLE agent_definition (
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('Agent', 'ScheduledRun')),
     namespace                    TEXT        NOT NULL,
     agent_name                   TEXT        NOT NULL,
     agent_uid                    TEXT        NOT NULL,
@@ -74,10 +76,10 @@ CREATE TABLE agent_definition (
     retired_at                   TIMESTAMPTZ,
     created_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (namespace, agent_uid)
+    PRIMARY KEY (namespace, source_kind, agent_uid)
 );
 CREATE UNIQUE INDEX agent_definition_active_name_idx
-    ON agent_definition (namespace, agent_name) WHERE retired_at IS NULL;
+    ON agent_definition (namespace, source_kind, agent_name) WHERE retired_at IS NULL;
 
 CREATE TABLE sandbox_template_definition (
     namespace TEXT NOT NULL,
@@ -268,30 +270,32 @@ CREATE UNIQUE INDEX session_task_event_message_idx
 CREATE TABLE scheduled_run (
     id UUID PRIMARY KEY,
     creator TEXT NOT NULL CHECK (creator <> ''),
-    request_id TEXT NOT NULL CHECK (char_length(request_id) BETWEEN 1 AND 128),
-    request_hash BYTEA NOT NULL CHECK (octet_length(request_hash) = 32),
+    namespace TEXT NOT NULL CHECK (namespace <> ''),
+    name TEXT NOT NULL CHECK (name <> ''),
+    generation BIGINT NOT NULL CHECK (generation > 0),
+    disabled BOOLEAN NOT NULL DEFAULT FALSE,
     data BYTEA NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT statement_timestamp(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT statement_timestamp(),
     next_execution_time TIMESTAMPTZ,
     deleted_at TIMESTAMPTZ,
-    UNIQUE (creator, request_id),
-    CHECK (deleted_at IS NULL OR next_execution_time IS NULL)
+    CHECK ((deleted_at IS NULL AND NOT disabled) OR next_execution_time IS NULL)
 );
-CREATE INDEX scheduled_run_owner_idx ON scheduled_run (creator, id) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX scheduled_run_active_name_idx ON scheduled_run (namespace, name) WHERE deleted_at IS NULL;
 CREATE INDEX scheduled_run_due_idx ON scheduled_run (next_execution_time, id)
     WHERE deleted_at IS NULL AND next_execution_time IS NOT NULL;
 
--- The optional session ID is historical provenance, without a foreign key.
+-- Session ID is historical provenance, retained after Session deletion.
 CREATE TABLE scheduled_run_execution (
     id UUID PRIMARY KEY,
     scheduled_run_id UUID NOT NULL REFERENCES scheduled_run(id) ON DELETE RESTRICT,
     scheduled_time TIMESTAMPTZ,
+    initiator TEXT NOT NULL,
     manual_request_id TEXT CHECK (char_length(manual_request_id) BETWEEN 1 AND 128),
     data BYTEA NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT statement_timestamp(),
     deadline TIMESTAMPTZ NOT NULL CHECK (deadline > created_at),
-    session_id UUID,
+    session_id UUID NOT NULL,
     task_id TEXT,
     completed_at TIMESTAMPTZ,
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
@@ -301,20 +305,18 @@ CREATE TABLE scheduled_run_execution (
         'SCHEDULED_RUN_EXECUTION_STATE_SUCCEEDED', 'SCHEDULED_RUN_EXECUTION_STATE_FAILED',
         'SCHEDULED_RUN_EXECUTION_STATE_TIMED_OUT')),
     CHECK ((scheduled_time IS NULL) <> (manual_request_id IS NULL)),
-    CHECK (state NOT IN ('SCHEDULED_RUN_EXECUTION_STATE_RUNNING', 'SCHEDULED_RUN_EXECUTION_STATE_SUCCEEDED')
-        OR session_id IS NOT NULL),
-    CHECK (task_id IS NULL OR session_id IS NOT NULL),
     CHECK ((completed_at IS NOT NULL) = (state IN ('SCHEDULED_RUN_EXECUTION_STATE_SUCCEEDED',
         'SCHEDULED_RUN_EXECUTION_STATE_FAILED', 'SCHEDULED_RUN_EXECUTION_STATE_TIMED_OUT'))),
     UNIQUE (scheduled_run_id, scheduled_time),
-    UNIQUE (scheduled_run_id, manual_request_id)
+    UNIQUE (scheduled_run_id, initiator, manual_request_id)
 );
 CREATE INDEX scheduled_run_execution_history_idx ON scheduled_run_execution (scheduled_run_id, id);
+CREATE UNIQUE INDEX scheduled_run_execution_session_idx ON scheduled_run_execution (session_id);
 CREATE INDEX scheduled_run_execution_pending_idx ON scheduled_run_execution (next_attempt_at, id)
     WHERE state IN ('SCHEDULED_RUN_EXECUTION_STATE_PENDING', 'SCHEDULED_RUN_EXECUTION_STATE_RUNNING');
 
 CREATE VIEW agent_runtime_revision AS
-    SELECT r.*, a.agent_name, a.agent_uid, a.agent_card
+    SELECT r.*, a.source_kind, a.agent_name, a.agent_uid, a.agent_card
     FROM runtime_revision r JOIN agent_revision a USING (revision) WHERE r.kind = 'agent';
 
 CREATE VIEW session_record AS

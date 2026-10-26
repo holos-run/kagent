@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	"github.com/kagent-dev/kagent/go/core/cli/internal/connection"
 	clioutput "github.com/kagent-dev/kagent/go/core/cli/internal/output"
@@ -118,14 +119,14 @@ func get(
 
 func writeSessionsTable(w io.Writer, sessions []*apiv1.Session, nextPageToken string) error {
 	tw := table.NewWriter()
-	tw.AppendHeader(table.Row{"ID", "AGENT", "STATE", "CREATED"})
+	tw.AppendHeader(table.Row{"ID", "SOURCE", "STATE", "CREATED"})
 	for _, session := range sessions {
 		if session == nil {
 			continue
 		}
 		tw.AppendRow(table.Row{
 			session.GetId(),
-			resourceName(session.GetAgent()),
+			definition.FromSession(session).Key(),
 			strings.TrimPrefix(session.GetState().String(), "RUNTIME_STATE_"),
 			formatTimestamp(session.GetCreatedAt()),
 		})
@@ -138,13 +139,6 @@ func writeSessionsTable(w io.Writer, sessions []*apiv1.Session, nextPageToken st
 		return fmt.Errorf("write Session output: %w", err)
 	}
 	return nil
-}
-
-func resourceName(reference *apiv1.ResourceReference) string {
-	if reference == nil {
-		return ""
-	}
-	return reference.GetName()
 }
 
 func formatTimestamp(timestamp *timestamppb.Timestamp) string {

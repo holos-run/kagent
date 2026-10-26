@@ -70,10 +70,8 @@ func workspaceSession(id, template string, state apiv1.RuntimeState, created tim
 	return &apiv1.Session{
 		Id: id,
 
-		Agent: &apiv1.ResourceReference{Namespace: "kagent", Name: template},
-
 		State:     state,
-		CreatedAt: timestamppb.New(created),
+		CreatedAt: timestamppb.New(created), Source: &apiv1.Session_Agent{Agent: &apiv1.AgentProvenance{Ref: &apiv1.ResourceReference{Namespace: "kagent", Name: template}}},
 	}
 }
 
@@ -582,4 +580,17 @@ func TestWorkspaceDigitsTypeInTheChat(t *testing.T) {
 	}
 	assert.Equal(t, panelChat, m.focus)
 	assert.Equal(t, "3 pods", m.chat.input.Value())
+}
+
+func TestScheduledSourceDoesNotMergeWithAgentName(t *testing.T) {
+	agent := &apiv1.Session{Id: "agent-session", Source: &apiv1.Session_Agent{Agent: &apiv1.AgentProvenance{Ref: &apiv1.ResourceReference{Name: "daily"}}}}
+	schedule := &apiv1.Session{Id: "schedule-session", Source: &apiv1.Session_ScheduledRun{ScheduledRun: &apiv1.ScheduledRunProvenance{Ref: &apiv1.ResourceReference{Name: "daily"}}}}
+	model := workspaceModel{all: []*apiv1.Session{agent, schedule}, agent: "daily"}
+	if got := model.visibleSessions(); len(got) != 1 || got[0].Id != agent.Id {
+		t.Fatalf("Agent filter matched %v", got)
+	}
+	model.agent = sessionSourceName(schedule)
+	if got := model.visibleSessions(); len(got) != 1 || got[0].Id != schedule.Id {
+		t.Fatalf("schedule filter matched %v", got)
+	}
 }

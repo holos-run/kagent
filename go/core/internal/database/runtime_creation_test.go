@@ -8,6 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/kagent-dev/kagent/go/api/definition"
 )
 
 func TestRuntimeCreationUsesLatestSuccessfulRevision(t *testing.T) {
@@ -30,7 +32,7 @@ func TestRuntimeCreationUsesLatestSuccessfulRevision(t *testing.T) {
 					return session.GetPreparedRevision(), created, err
 				}
 				desire = func(c *Client, revision string) error {
-					err := c.UpsertAgentDefinition(ctx, AgentDefinition{Namespace: "team-a", AgentName: "assistant", AgentUID: "assistant-uid", DesiredRevision: revision})
+					err := c.UpsertAgentDefinition(ctx, AgentDefinition{Source: definition.Source{Kind: definition.Agent, Namespace: "team-a", Name: "assistant", UID: "assistant-uid"}, DesiredRevision: revision})
 					return err
 				}
 			} else {

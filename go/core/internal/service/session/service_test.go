@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
 	authimpl "github.com/kagent-dev/kagent/go/core/internal/httpserver/auth"
@@ -22,6 +23,65 @@ import (
 )
 
 type serviceTestSession struct{ userID string }
+
+type scheduledSessionStore struct {
+	serviceTestStore
+	value     *apiv1.Session
+	lookupErr error
+}
+
+func (s *scheduledSessionStore) GetSessionByID(context.Context, string) (*apiv1.Session, error) {
+	return s.value, s.lookupErr
+}
+
+func TestScheduledSessionAccessUsesResourcePermissions(t *testing.T) {
+	id := uuid.NewString()
+	value := &apiv1.Session{Id: id, Creator: "scheduler", Source: &apiv1.Session_ScheduledRun{ScheduledRun: &apiv1.ScheduledRunProvenance{Ref: &apiv1.ResourceReference{Namespace: "team", Name: "daily"}, Uid: "schedule-uid", ExecutionId: uuid.NewString()}}}
+	for _, tc := range []struct {
+		name   string
+		verb   auth.Verb
+		denied string
+		want   serviceerrors.Code
+	}{
+		{"human reads history", auth.VerbGet, "", ""},
+		{"human continues", auth.VerbUpdate, "", ""},
+		{"history denied", auth.VerbGet, "ScheduledRunHistory", serviceerrors.CodePermissionDenied},
+		{"invocation denied", auth.VerbUpdate, "ScheduledRunInvocation", serviceerrors.CodePermissionDenied},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &scheduledSessionStore{serviceTestStore: serviceTestStore{getErr: database.ErrNotFound}, value: value}
+			policy := &recordingAuthorizer{deniedTypes: map[string]bool{tc.denied: true}}
+			service := NewService(store, policy, nil)
+			result, err := service.getAuthorized(serviceTestContext("human"), id, tc.verb)
+			if tc.want != "" {
+				require.True(t, serviceerrors.IsCode(err, tc.want))
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "scheduler", result.Creator)
+			require.Equal(t, "human", policy.principal.ID)
+			require.Equal(t, "team", policy.resource.Namespace)
+			require.Equal(t, "daily", policy.resource.Name)
+		})
+	}
+	store := &scheduledSessionStore{serviceTestStore: serviceTestStore{getErr: database.ErrNotFound}, lookupErr: errors.New("database unavailable")}
+	_, err := NewService(store, serviceTestAuthorizer{}, nil).Get(serviceTestContext("human"), id)
+	require.True(t, serviceerrors.IsCode(err, serviceerrors.CodeInternal), "unscoped lookup failures must remain errors")
+}
+
+func TestScheduledCheckpointForkRemainsPrivate(t *testing.T) {
+	id := uuid.NewString()
+	value := &apiv1.Session{Id: id, Creator: "alice", Source: &apiv1.Session_ScheduledRun{ScheduledRun: &apiv1.ScheduledRunProvenance{
+		Ref: &apiv1.ResourceReference{Namespace: "team", Name: "daily"}, Uid: "schedule-uid",
+	}}}
+	store := &scheduledSessionStore{serviceTestStore: serviceTestStore{getErr: database.ErrNotFound}, value: value}
+	_, err := NewService(store, serviceTestAuthorizer{}, nil).Get(serviceTestContext("bob"), id)
+	require.True(t, serviceerrors.IsCode(err, serviceerrors.CodeNotFound), "schedule history access must not expose another caller's fork")
+	store.getErr, store.getResult = nil, value
+	result, err := NewService(store, serviceTestAuthorizer{}, nil).Get(serviceTestContext("alice"), id)
+	require.NoError(t, err)
+	require.Equal(t, value, result)
+}
 
 func (s serviceTestSession) Principal() auth.Principal {
 	return auth.Principal{ID: s.userID}
@@ -76,7 +136,7 @@ func (s *serviceTestStore) GetSession(_ context.Context, id, creator string) (*a
 	if s.getResult != nil || s.getErr != nil {
 		return s.getResult, s.getErr
 	}
-	return &apiv1.Session{Id: id, State: apiv1.RuntimeState_RUNTIME_STATE_READY, Operation: apiv1.RuntimeOperation_RUNTIME_OPERATION_NONE}, nil
+	return &apiv1.Session{Id: id, Creator: creator, State: apiv1.RuntimeState_RUNTIME_STATE_READY, Operation: apiv1.RuntimeOperation_RUNTIME_OPERATION_NONE}, nil
 }
 
 func (s *serviceTestStore) GetSessionByID(ctx context.Context, id string) (*apiv1.Session, error) {
@@ -445,11 +505,11 @@ func TestServiceListPassesAgentToStore(t *testing.T) {
 	store := &serviceTestStore{}
 	service := NewService(store, serviceTestAuthorizer{}, serviceTestWorkflow{})
 	agent := &apiv1.ResourceReference{Namespace: "team-a", Name: "assistant"}
-	_, err := service.List(serviceTestContext("alice"), ListRequest{Agent: agent})
+	_, err := service.List(serviceTestContext("alice"), ListRequest{Source: definition.AgentReference(agent)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.listQuery.Agent != agent {
+	if *store.listQuery.Source != *definition.AgentReference(agent) {
 		t.Fatal("Agent filter was lost")
 	}
 }
@@ -608,12 +668,12 @@ func TestServiceSharedListCannotBroadenAccess(t *testing.T) {
 	}{
 		{name: "only shared conversation", count: 1},
 		{name: "all creators", request: ListRequest{AllCreators: true}, count: 1},
-		{name: "matching Agent", request: ListRequest{Agent: agent}, count: 1},
-		{name: "other Agent", request: ListRequest{Agent: &apiv1.ResourceReference{Namespace: "team-a", Name: "other"}}},
+		{name: "matching Agent", request: ListRequest{Source: definition.AgentReference(agent)}, count: 1},
+		{name: "other Agent", request: ListRequest{Source: definition.AgentReference(&apiv1.ResourceReference{Namespace: "team-a", Name: "other"})}},
 		{name: "past shared conversation", request: ListRequest{PageToken: encodePageToken(id)}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			stored := &apiv1.Session{Id: id, Agent: agent}
+			stored := &apiv1.Session{Id: id, Source: &apiv1.Session_Agent{Agent: &apiv1.AgentProvenance{Ref: agent}}}
 			store := &serviceTestStore{getResult: stored}
 			service := NewService(store, serviceTestAuthorizer{}, nil)
 			result, err := service.List(ctx, test.request)
@@ -752,7 +812,7 @@ func TestSessionCreateUsesTargetNamespace(t *testing.T) {
 			svc := NewService(store, sessionCreateNamespacePolicy{namespace: "team-a"}, serviceTestWorkflow{})
 			created, err := svc.Create(serviceTestContext("alice"), &apiv1.ResourceReference{Namespace: namespace, Name: "assistant"}, "request", "")
 			if namespace == "team-a" {
-				if err != nil || created.GetAgent().GetNamespace() != namespace || created.GetCreator() != "alice" {
+				if err != nil || created.GetAgent().GetRef().GetNamespace() != namespace || created.GetCreator() != "alice" {
 					t.Fatalf("create = %+v, error = %v", created, err)
 				}
 			} else if !serviceerrors.IsCode(err, serviceerrors.CodePermissionDenied) || store.createInput != nil {

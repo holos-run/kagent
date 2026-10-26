@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	"github.com/kagent-dev/kagent/go/core/internal/egress"
 	"github.com/kagent-dev/kagent/go/core/pkg/egresspolicy"
@@ -18,8 +19,8 @@ import (
 func TestRuntimeEgressRetainsSourceAndListsSuspendedActors(t *testing.T) {
 	client := NewClient(setupTestDB(t), "public")
 	ctx := t.Context()
-	revision := RuntimeRevision{Revision: "agent", Namespace: "team-a", AgentName: "scratch", AgentUID: "old-uid", SourceSnapshot: []byte(`{}`), AgentCard: &a2apb.AgentCard{}, ActorTemplateAtespace: "team-a", ActorTemplateName: "runtime", TokenPassthroughTargets: []egresspolicy.GatewayTarget{{Origin: "https://model.example.com:443", Header: "authorization"}}, EgressDestinations: []string{"https://model.example.com:443"}}
-	upsertErr := client.UpsertAgentDefinition(ctx, AgentDefinition{Namespace: "team-a", AgentName: "scratch", AgentUID: "old-uid", DesiredRevision: "agent"})
+	revision := RuntimeRevision{Source: definition.Source{Kind: definition.Agent, Namespace: "team-a", Name: "scratch", UID: "old-uid"}, Revision: "agent", SourceSnapshot: []byte(`{}`), AgentCard: &a2apb.AgentCard{}, ActorTemplateAtespace: "team-a", ActorTemplateName: "runtime", TokenPassthroughTargets: []egresspolicy.GatewayTarget{{Origin: "https://model.example.com:443", Header: "authorization"}}, EgressDestinations: []string{"https://model.example.com:443"}}
+	upsertErr := client.UpsertAgentDefinition(ctx, AgentDefinition{Source: definition.Source{Kind: definition.Agent, Namespace: "team-a", Name: "scratch", UID: "old-uid"}, DesiredRevision: "agent"})
 	require.NoError(t, upsertErr)
 	require.NoError(t, client.RecordRuntimeRevision(ctx, revision, RecordRevisionOptions{Ready: true}))
 	instance, _, err := client.CreateSession(ctx, newSessionRequest(uuid.NewString(), "scratch", "kagent", ""), "request")
@@ -48,7 +49,7 @@ func TestRuntimeEgressRetainsSourceAndListsSuspendedActors(t *testing.T) {
 	_, err = client.FinishSessionOperation(ctx, instance.Id, op.ID, executor, "", "", "")
 	require.NoError(t, err)
 	// A recreated Agent must not transfer authorization to an old pinned session.
-	upsertErr = client.UpsertAgentDefinition(ctx, AgentDefinition{Namespace: "team-a", AgentName: "scratch", AgentUID: "new-uid", DesiredRevision: "pending"})
+	upsertErr = client.UpsertAgentDefinition(ctx, AgentDefinition{Source: definition.Source{Kind: definition.Agent, Namespace: "team-a", Name: "scratch", UID: "new-uid"}, DesiredRevision: "pending"})
 	require.NoError(t, upsertErr)
 	sandbox, options := sandboxFixture(t, client, "sandbox")
 	created, _, err := client.CreateSandbox(ctx, sandbox, "sandbox", options)
@@ -132,8 +133,7 @@ func TestRuntimeEgressTokenOriginsAreNotGrants(t *testing.T) {
 			for _, origin := range test.origins {
 				targets = append(targets, egresspolicy.GatewayTarget{Origin: origin, Header: "authorization"})
 			}
-			require.NoError(t, client.RecordRuntimeRevision(ctx, RuntimeRevision{
-				Revision: "revision", Namespace: "team", AgentName: "source", AgentUID: "uid",
+			require.NoError(t, client.RecordRuntimeRevision(ctx, RuntimeRevision{Source: definition.Source{Kind: definition.Agent, Namespace: "team", Name: "source", UID: "uid"}, Revision: "revision",
 				SourceSnapshot: []byte(`{}`), AgentCard: &a2apb.AgentCard{}, ActorTemplateAtespace: "team", ActorTemplateName: "runtime",
 				TokenPassthroughTargets: targets,
 			}, RecordRevisionOptions{}))
@@ -147,13 +147,12 @@ func TestRuntimeEgressTokenOriginsAreNotGrants(t *testing.T) {
 func TestRuntimeEgressCanonicalTokenOriginWithholdsCredentials(t *testing.T) {
 	client := NewClient(setupTestDB(t), "public")
 	ctx := t.Context()
-	err := client.UpsertAgentDefinition(ctx, AgentDefinition{Namespace: "team", AgentName: "source", AgentUID: "uid", EgressGrant: egress.Access{
+	err := client.UpsertAgentDefinition(ctx, AgentDefinition{Source: definition.Source{Kind: definition.Agent, Namespace: "team", Name: "source", UID: "uid"}, EgressGrant: egress.Access{
 		Destinations: []string{"https://model.example.com"},
 		Credentials:  []egress.Credential{{Origin: "https://model.example.com", Header: "authorization", URI: "ate-secret://k8s.io/default/team/model/token"}},
 	}})
 	require.NoError(t, err)
-	require.NoError(t, client.RecordRuntimeRevision(ctx, RuntimeRevision{
-		Revision: "revision", Namespace: "team", AgentName: "source", AgentUID: "uid",
+	require.NoError(t, client.RecordRuntimeRevision(ctx, RuntimeRevision{Source: definition.Source{Kind: definition.Agent, Namespace: "team", Name: "source", UID: "uid"}, Revision: "revision",
 		SourceSnapshot: []byte(`{}`), AgentCard: &a2apb.AgentCard{}, ActorTemplateAtespace: "team", ActorTemplateName: "runtime",
 		TokenPassthroughTargets: []egresspolicy.GatewayTarget{{Origin: "https://MODEL.example.com.", Header: "Authorization"}},
 	}, RecordRevisionOptions{}))
@@ -170,7 +169,7 @@ func TestSourceGrantsDetermineEffectivePolicy(t *testing.T) {
 			ctx := t.Context()
 			upsert := func(uid string, grants egress.Access) error {
 				if kind == RuntimeEgressAgent {
-					return client.UpsertAgentDefinition(ctx, AgentDefinition{Namespace: "team", AgentName: "source", AgentUID: uid, EgressGrant: grants})
+					return client.UpsertAgentDefinition(ctx, AgentDefinition{Source: definition.Source{Kind: definition.Agent, Namespace: "team", Name: "source", UID: uid}, EgressGrant: grants})
 				}
 				return client.UpsertSandboxTemplateDefinition(ctx, SandboxTemplateDefinition{Namespace: "team", SandboxTemplateName: "source", SandboxTemplateUID: uid, EgressGrant: grants})
 			}
@@ -188,7 +187,7 @@ func TestSourceGrantsDetermineEffectivePolicy(t *testing.T) {
 			err = upsert("uid", canonical)
 			require.NoError(t, err)
 			if kind == RuntimeEgressAgent {
-				require.NoError(t, client.RecordRuntimeRevision(ctx, RuntimeRevision{Revision: "revision", Namespace: "team", AgentName: "source", AgentUID: "uid", SourceSnapshot: []byte(`{}`), AgentCard: &a2apb.AgentCard{}, EgressDestinations: base.Destinations, Credentials: base.Credentials, ActorTemplateAtespace: "team", ActorTemplateName: "runtime"}, RecordRevisionOptions{}))
+				require.NoError(t, client.RecordRuntimeRevision(ctx, RuntimeRevision{Source: definition.Source{Kind: definition.Agent, Namespace: "team", Name: "source", UID: "uid"}, Revision: "revision", SourceSnapshot: []byte(`{}`), AgentCard: &a2apb.AgentCard{}, EgressDestinations: base.Destinations, Credentials: base.Credentials, ActorTemplateAtespace: "team", ActorTemplateName: "runtime"}, RecordRevisionOptions{}))
 			} else {
 				require.NoError(t, client.RecordSandboxRevision(ctx, SandboxRevision{RuntimeArtifact: RuntimeArtifact{Revision: "revision", Namespace: "team", ActorTemplateAtespace: "team", ActorTemplateName: "runtime"}, SandboxTemplateName: "source", SandboxTemplateUID: "uid", SourceSnapshot: []byte(`{}`)}, RecordRevisionOptions{}))
 			}
@@ -216,7 +215,7 @@ func TestSourceGrantsDetermineEffectivePolicy(t *testing.T) {
 				require.Equal(t, expected, policy, "older revisions retain nonconflicting grants")
 			}
 			if kind == RuntimeEgressAgent {
-				require.NoError(t, client.RetireAgentIdentities(ctx, "team", "source"))
+				require.NoError(t, client.RetireAgentIdentities(ctx, definition.Agent, "team", "source"))
 			} else {
 				require.NoError(t, client.RetireSandboxTemplateIdentities(ctx, "team", "source"))
 			}
@@ -239,14 +238,14 @@ func TestSourceGrantsRollbackWithInvalidRevision(t *testing.T) {
 	client := NewClient(setupTestDB(t), "public")
 	ctx := t.Context()
 	grants := egress.Access{Destinations: []string{"https://tickets.example.com:443"}}
-	definition := AgentDefinition{Namespace: "team", AgentName: "source", AgentUID: "uid", EgressGrant: grants}
-	err := client.UpsertAgentDefinition(ctx, definition)
+	def := AgentDefinition{Source: definition.Source{Kind: definition.Agent, Namespace: "team", Name: "source", UID: "uid"}, EgressGrant: grants}
+	err := client.UpsertAgentDefinition(ctx, def)
 	require.NoError(t, err)
-	require.NoError(t, client.RecordRuntimeRevision(ctx, RuntimeRevision{Revision: "agent", Namespace: "team", AgentName: "source", AgentUID: "uid", SourceSnapshot: []byte(`{}`), AgentCard: &a2apb.AgentCard{}, ActorTemplateAtespace: "team", ActorTemplateName: "agent"}, RecordRevisionOptions{}))
+	require.NoError(t, client.RecordRuntimeRevision(ctx, RuntimeRevision{Source: definition.Source{Kind: definition.Agent, Namespace: "team", Name: "source", UID: "uid"}, Revision: "agent", SourceSnapshot: []byte(`{}`), AgentCard: &a2apb.AgentCard{}, ActorTemplateAtespace: "team", ActorTemplateName: "agent"}, RecordRevisionOptions{}))
 	require.NoError(t, client.RecordSandboxRevision(ctx, SandboxRevision{RuntimeArtifact: RuntimeArtifact{Revision: "sandbox", Namespace: "team", ActorTemplateAtespace: "team", ActorTemplateName: "sandbox"}, SandboxTemplateName: "scratch", SandboxTemplateUID: "sandbox", SourceSnapshot: []byte(`{}`)}, RecordRevisionOptions{}))
 	for _, uid := range []string{"uid", "replacement"} {
-		definition.AgentUID, definition.DesiredRevision, definition.EgressGrant = uid, "sandbox", egress.Access{}
-		err = client.UpsertAgentDefinition(ctx, definition)
+		def.UID, def.DesiredRevision, def.EgressGrant = uid, "sandbox", egress.Access{}
+		err = client.UpsertAgentDefinition(ctx, def)
 		require.ErrorIs(t, err, ErrConflict)
 		policy, err := client.GetRuntimeEgressPolicy(ctx, "agent")
 		require.NoError(t, err)
@@ -267,9 +266,9 @@ func TestRuntimeEgressMalformedInputsFailClosed(t *testing.T) {
 			pool := setupTestDB(t)
 			client := NewClient(pool, "public")
 			ctx := t.Context()
-			err := client.UpsertAgentDefinition(ctx, AgentDefinition{Namespace: "team", AgentName: "source", AgentUID: "uid"})
+			err := client.UpsertAgentDefinition(ctx, AgentDefinition{Source: definition.Source{Kind: definition.Agent, Namespace: "team", Name: "source", UID: "uid"}})
 			require.NoError(t, err)
-			require.NoError(t, client.RecordRuntimeRevision(ctx, RuntimeRevision{Revision: "revision", Namespace: "team", AgentName: "source", AgentUID: "uid", SourceSnapshot: []byte(`{}`), AgentCard: &a2apb.AgentCard{}, ActorTemplateAtespace: "team", ActorTemplateName: "runtime"}, RecordRevisionOptions{}))
+			require.NoError(t, client.RecordRuntimeRevision(ctx, RuntimeRevision{Source: definition.Source{Kind: definition.Agent, Namespace: "team", Name: "source", UID: "uid"}, Revision: "revision", SourceSnapshot: []byte(`{}`), AgentCard: &a2apb.AgentCard{}, ActorTemplateAtespace: "team", ActorTemplateName: "runtime"}, RecordRevisionOptions{}))
 			_, err = pool.Exec(ctx, test.statement)
 			require.NoError(t, err)
 			_, err = client.GetRuntimeEgressPolicy(ctx, "revision")
@@ -287,12 +286,17 @@ func TestReadAdmittedGrantsScopesIdentity(t *testing.T) {
 			var retire func(context.Context, string, string) error
 			upsert := func(uid string, grants egress.Access) error {
 				if kind == RuntimeEgressAgent {
-					return client.UpsertAgentDefinition(ctx, AgentDefinition{Namespace: "team", AgentName: "source", AgentUID: uid, EgressGrant: grants})
+					return client.UpsertAgentDefinition(ctx, AgentDefinition{Source: definition.Source{Kind: definition.Agent, Namespace: "team", Name: "source", UID: uid}, EgressGrant: grants})
 				}
 				return client.UpsertSandboxTemplateDefinition(ctx, SandboxTemplateDefinition{Namespace: "team", SandboxTemplateName: "source", SandboxTemplateUID: uid, EgressGrant: grants})
 			}
 			if kind == RuntimeEgressAgent {
-				read, retire = client.GetAgentEgressGrant, client.RetireAgentIdentities
+				read = func(ctx context.Context, namespace, uid string) (egress.Access, error) {
+					return client.GetAgentEgressGrant(ctx, definition.Source{Kind: definition.Agent, Namespace: namespace, UID: uid})
+				}
+				retire = func(ctx context.Context, namespace, name string) error {
+					return client.RetireAgentIdentities(ctx, definition.Agent, namespace, name)
+				}
 			} else {
 				read, retire = client.GetSandboxEgressGrant, client.RetireSandboxTemplateIdentities
 			}
@@ -321,14 +325,14 @@ func TestReadAdmittedGrantsScopesIdentity(t *testing.T) {
 func TestActorJWTGrantPersistenceAndRevocation(t *testing.T) {
 	c := NewClient(setupTestDB(t), "public")
 	grant := egress.Access{Destinations: []string{"https://mcp.example.com:443"}, Credentials: []egress.Credential{{Origin: "https://mcp.example.com:443", Header: "authorization", Prefix: "Bearer ", ActorJWT: &egress.ActorJWT{Audiences: []string{"mcp"}, ExpirationSeconds: 900}}}}
-	definition := AgentDefinition{Namespace: "team", AgentName: "source", AgentUID: "uid", EgressGrant: grant}
-	require.NoError(t, c.UpsertAgentDefinition(t.Context(), definition))
-	require.NoError(t, c.RecordRuntimeRevision(t.Context(), RuntimeRevision{Revision: "actor-token", Namespace: "team", AgentName: "source", AgentUID: "uid", SourceSnapshot: []byte(`{}`), AgentCard: &a2apb.AgentCard{}, ActorTemplateAtespace: "team", ActorTemplateName: "runtime"}, RecordRevisionOptions{}))
+	def := AgentDefinition{Source: definition.Source{Kind: definition.Agent, Namespace: "team", Name: "source", UID: "uid"}, EgressGrant: grant}
+	require.NoError(t, c.UpsertAgentDefinition(t.Context(), def))
+	require.NoError(t, c.RecordRuntimeRevision(t.Context(), RuntimeRevision{Source: definition.Source{Kind: definition.Agent, Namespace: "team", Name: "source", UID: "uid"}, Revision: "actor-token", SourceSnapshot: []byte(`{}`), AgentCard: &a2apb.AgentCard{}, ActorTemplateAtespace: "team", ActorTemplateName: "runtime"}, RecordRevisionOptions{}))
 	policy, err := c.GetRuntimeEgressPolicy(t.Context(), "actor-token")
 	require.NoError(t, err)
 	require.Equal(t, grant, policy)
-	definition.EgressGrant = egress.Access{}
-	require.NoError(t, c.UpsertAgentDefinition(t.Context(), definition))
+	def.EgressGrant = egress.Access{}
+	require.NoError(t, c.UpsertAgentDefinition(t.Context(), def))
 	policy, err = c.GetRuntimeEgressPolicy(t.Context(), "actor-token")
 	require.NoError(t, err)
 	require.Empty(t, policy.Credentials, "live policy removal revokes Actor token injection on existing revisions")

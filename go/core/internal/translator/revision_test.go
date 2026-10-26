@@ -9,10 +9,12 @@ import (
 	atev1 "go.ate.dev/substrate/api/infra/k8s/ate/v1"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/kagent-dev/kagent/go/api/definition"
 )
 
 func TestRevisionDigestIncludesSandboxClass(t *testing.T) {
-	revision := &Revision{Namespace: "agents", AgentName: "helper"}
+	revision := &Revision{Source: definition.Source{Kind: definition.Agent, Namespace: "agents", Name: "helper"}}
 	original, err := revision.Digest()
 	require.NoError(t, err)
 	require.NotEqual(t, "563beefdd1b191baae375aa92e70bcab812a3c4fd2a189cdf74668f1ad45456d", original.String(),
@@ -39,7 +41,7 @@ func TestRevisionDigestIncludesSandboxClass(t *testing.T) {
 }
 
 func TestRevisionDigestReplacesNameOnlyWorkerPoolTemplate(t *testing.T) {
-	revision := &Revision{Namespace: "tenant-a", AgentName: "helper", WorkerPoolName: "kagent-default"}
+	revision := &Revision{Source: definition.Source{Kind: definition.Agent, Namespace: "tenant-a", Name: "helper"}, WorkerPoolName: "kagent-default"}
 	id, err := revision.Digest()
 	require.NoError(t, err)
 	require.NotEqual(t, "01d0e398a0a585b884d12b7d9ae7924437ca21d6c44c7461ac869e396980a75e", id.String(),
@@ -50,7 +52,7 @@ func TestRevisionDigestReplacesNameOnlyWorkerPoolTemplate(t *testing.T) {
 }
 
 func TestRevisionDigestExcludesProvenance(t *testing.T) {
-	revision := &Revision{Namespace: "agents", AgentName: "helper", Provenance: []byte(`[{"kind":"ConfigMap","hash":"first"}]`)}
+	revision := &Revision{Source: definition.Source{Kind: definition.Agent, Namespace: "agents", Name: "helper"}, Provenance: []byte(`[{"kind":"ConfigMap","hash":"first"}]`)}
 	first, err := revision.Digest()
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +71,7 @@ func TestRevisionDigestExcludesProvenance(t *testing.T) {
 }
 
 func TestRevisionDigestIncludesConfig(t *testing.T) {
-	revision := &Revision{Namespace: "agents", AgentName: "helper", ConfigJSON: []byte(`{"version":5,"runtime_telemetry":{"capture_content":false}}`)}
+	revision := &Revision{Source: definition.Source{Kind: definition.Agent, Namespace: "agents", Name: "helper"}, ConfigJSON: []byte(`{"version":5,"runtime_telemetry":{"capture_content":false}}`)}
 	first, err := revision.Digest()
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +87,7 @@ func TestRevisionDigestIncludesConfig(t *testing.T) {
 }
 
 func TestCompilationWarningsDoNotAffectRevisionDigest(t *testing.T) {
-	compilation := &CompileResult{Revision: Revision{Namespace: "agents", AgentName: "helper"}}
+	compilation := &CompileResult{Revision: Revision{Source: definition.Source{Kind: definition.Agent, Namespace: "agents", Name: "helper"}}}
 	first, err := compilation.Digest()
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +106,7 @@ func TestCompilationWarningsDoNotAffectRevisionDigest(t *testing.T) {
 }
 
 func TestRevisionDigestIncludesCommand(t *testing.T) {
-	revision := &Revision{Namespace: "agents", AgentName: "helper", Command: []string{"/agent"}}
+	revision := &Revision{Source: definition.Source{Kind: definition.Agent, Namespace: "agents", Name: "helper"}, Command: []string{"/agent"}}
 	first, err := revision.Digest()
 	if err != nil {
 		t.Fatal(err)
@@ -152,5 +154,25 @@ func TestRevisionDigestIncludesResources(t *testing.T) {
 		after, err := changed.Digest()
 		require.NoError(t, err)
 		require.NotEqual(t, before, after)
+	}
+}
+
+func TestRevisionDigestIncludesSourceIdentity(t *testing.T) {
+	revision := Revision{Source: definition.Source{Kind: definition.Agent, Namespace: "team", Name: "report", UID: "source-uid"}}
+	original, err := revision.Digest()
+	require.NoError(t, err)
+	for _, source := range []definition.Source{
+		{Kind: definition.ScheduledRun, Namespace: "team", Name: "report", UID: "source-uid"},
+		{Kind: definition.Agent, Namespace: "other", Name: "report", UID: "source-uid"},
+		{Kind: definition.Agent, Namespace: "team", Name: "other", UID: "source-uid"},
+		{Kind: definition.Agent, Namespace: "team", Name: "report", UID: "replacement-uid"},
+	} {
+		t.Run(source.Key()+"/"+source.UID, func(t *testing.T) {
+			changed := revision
+			changed.Source = source
+			digest, err := changed.Digest()
+			require.NoError(t, err)
+			require.NotEqual(t, original, digest, "distinct sources must not share immutable runtime templates")
+		})
 	}
 }

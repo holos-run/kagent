@@ -25,12 +25,14 @@ spec:
     expirationSeconds: 900
 ```
 
-The response contains the current Agent's namespace, name, UID, labels, and
+The response identifies the source resource (`Agent` or `ScheduledRun`) by kind,
+namespace, name, UID, labels, and
 annotations, alongside the bound Session ID and its pinned runtime revision:
 
 ```json
 {
   "agent": {
+    "kind": "Agent",
     "namespace": "support",
     "name": "ticket-assistant",
     "uid": "<Kubernetes Agent UID>",
@@ -48,10 +50,12 @@ last-applied configuration annotations. The response has no spec, status, or
 generic Kubernetes resource field.
 
 The service checks the signed Actor identity against the Session's current Actor
-UID and atespace, then obtains the Agent identity from the Session's saved runtime
-revision. The current Kubernetes Agent must have the same UID. Obsolete actors,
-deleted Sessions, and deleted or recreated Agents cannot resolve metadata. Label
-and annotation edits on the same Agent UID are visible immediately.
+UID and atespace, then obtains the source identity from the Session's saved runtime
+revision. The current Kubernetes resource must have the same kind and UID.
+Obsolete actors, deleted Sessions, and deleted or recreated sources cannot resolve
+metadata. Label and annotation edits on that resource are visible immediately.
+A ScheduledRun compiles its embedded AgentSpec directly, so lookup returns the
+ScheduledRun's metadata without requiring an Agent resource.
 
 `sessionId` and `runtimeRevision` come from that verified Session binding. The
 revision stays pinned even when the Agent's current configuration changes; live

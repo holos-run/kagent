@@ -35,7 +35,6 @@ import {
 import type { ReactNode } from "react";
 import {
   apiClient,
-  bareName,
   type AgentInstance,
   type ApiResource,
 } from "@/api";
@@ -64,7 +63,7 @@ import {
   railItemIsActive,
   type RailItem,
 } from "./railItems";
-import { agentPageUrl, agentUrl, type AgentInstanceRef } from "./agentUrl";
+import { instanceSourceUrl, agentUrl, type AgentInstanceRef } from "./agentUrl";
 import { AgentSwitcher } from "./AgentSwitcher";
 import {
   checkboxStyles,
@@ -207,8 +206,9 @@ export function AgentRail({
   const conversations = instances;
   // A conversation route has only its instance ID. Resolve its Agent from the
   // already-loaded list while the per-instance read catches up during a switch.
-  const currentAgentName =
-    conversations.data?.find((item) => item.id === ref.id)?.agent ?? instance?.agent;
+  const currentInstance = conversations.data?.find((item) => item.id === ref.id) ?? instance;
+  const source = currentInstance?.source;
+  const sourceKind = source?.kind ?? (agentRef ? "Agent" : undefined);
 
   /**
    * Which agent the switcher is open *for*, rather than whether it is open.
@@ -260,12 +260,7 @@ export function AgentRail({
    */
   const agentPageHref =
     agentHrefFromCaller ??
-    (currentAgentName
-      ? agentPageUrl({
-        namespace: currentAgentName.split("/")[0],
-          name: bareName(currentAgentName),
-        })
-      : undefined);
+    instanceSourceUrl(currentInstance);
 
   /*
    * The Agent identity, for everything that is about the agent rather than the
@@ -273,10 +268,8 @@ export function AgentRail({
    * instance — the pages with no conversation open have only the first.
    */
   const agent = agentRef ?? {
-    namespace: currentAgentName?.split("/")[0] ?? "",
-    name: currentAgentName
-      ? bareName(currentAgentName)
-      : agentTitle?.primary,
+    namespace: source?.namespace ?? "",
+    name: source?.name ?? agentTitle?.primary,
   };
 
   /*
@@ -312,7 +305,7 @@ export function AgentRail({
    * Built from `agentPageHref`, never `agentHref`: a redirected details link addresses
    * the conversation, and `/new` under it is a route nothing serves.
    */
-  const newChatHref = agentPageHref ? `${agentPageHref}/new` : undefined;
+  const newChatHref = sourceKind === "Agent" && agentPageHref ? `${agentPageHref}/new` : undefined;
 
   /*
    * The rail's navigation, as data an extension can reach.
@@ -343,10 +336,12 @@ export function AgentRail({
      * what left the rail empty on the agent and new-conversation pages: an agent's own
      * navigation showing none of its conversations.
      */
-    const siblings = currentAgentName
+    const siblings = source
       ? (conversations.data ?? []).filter(
           (candidate) =>
-            candidate.agent === currentAgentName,
+            candidate.source.kind === source.kind &&
+            candidate.source.namespace === source.namespace &&
+            candidate.source.name === source.name,
         )
       : (conversations.data ?? []);
     const needle = query.trim().toLowerCase();
@@ -361,7 +356,7 @@ export function AgentRail({
             candidate.name.toLowerCase().includes(needle),
         );
     return [...found].sort(byNewestFirst);
-  }, [conversations.data, currentAgentName, query]);
+  }, [conversations.data, source, query]);
 
   /*
    * Collapsed, and remembered.
@@ -808,7 +803,7 @@ export function AgentRail({
               being switched. It took them from the instance id, which meant the badge
               changed every time a reader opened a different conversation with the same
               agent — while the menu behind it listed agents that never changed. */}
-          {(currentAgentName ? bareName(currentAgentName) : (agentTitle?.primary ?? ref.id ?? ""))
+          {(source?.name ?? agentTitle?.primary ?? ref.id ?? "")
             .slice(0, 2)
             .toUpperCase()}
         </span>
@@ -821,9 +816,7 @@ export function AgentRail({
               recognises the agent by; the id distinguishes this conversation from
               the others with it. Until the instance loads there is only the id. */}
           <Text ellipsis css={{ fontSize: 14, color: theme.color.text }}>
-            {currentAgentName
-              ? bareName(currentAgentName)
-              : (agentTitle?.primary ?? shortInstanceId(ref.id ?? ""))}
+            {source?.name ?? agentTitle?.primary ?? shortInstanceId(ref.id ?? "")}
           </Text>
           {/* Which conversation, under which agent. Named the way the reader named
               it, so the card and the row below it agree. */}
@@ -844,7 +837,7 @@ export function AgentRail({
                 named Agent definition. The conversation is named in the list
                 below, where it is one row among its siblings; naming it here made the
                 card describe a conversation while the menu it opens describes agents. */}
-            { (agentTitle?.secondary ?? agentRef?.namespace ?? currentAgentName?.split("/")[0] ?? "")}
+            { (agentTitle?.secondary ?? agentRef?.namespace ?? source?.namespace ?? "")}
           </Text>
         </span>
         <ChevronsUpDown size={14} color={theme.color.textMuted} aria-hidden />

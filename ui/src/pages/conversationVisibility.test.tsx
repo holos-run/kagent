@@ -24,7 +24,7 @@ function renderPage(page: "agents" | "unmapped", empty = false) {
     }] }) });
     service(SessionService, { listSessions: (request) => {
       if (request.allCreators) throw new ConnectError("Broad refused", Code.PermissionDenied);
-      return { sessions: empty ? [] : [{ id: "owned", creator: "alice", agent: { namespace: "team-a", name: page === "agents" ? "assistant" : "deleted" } }] };
+      return { sessions: empty ? [] : [{ id: "owned", creator: "alice", source: { case: "agent", value: { ref: { namespace: "team-a", name: page === "agents" ? "assistant" : "deleted" }, uid: "agent-uid" } } }, { id: "scheduled", creator: "alice", source: { case: "scheduledRun", value: { ref: { namespace: "team-a", name: "assistant" }, uid: "schedule-uid", executionId: "execution" } } }] };
     } });
   }));
   render(<ThemeProvider theme={themeFor("dark")}>

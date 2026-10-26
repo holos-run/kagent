@@ -53,6 +53,7 @@ function instance(overrides: Partial<AgentInstance> = {}): AgentInstance {
 
     name: "",
     creator: "alice@example.com",
+    source: { kind: "Agent", namespace: "kagent", name: "assistant", uid: "agent-uid" },
     state: "ready",
     operation: "unspecified",
     createdAt: "2026-08-18T09:12:00Z",

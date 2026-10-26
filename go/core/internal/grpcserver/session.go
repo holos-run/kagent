@@ -3,6 +3,7 @@ package grpcserver
 import (
 	"context"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	sessionsvc "github.com/kagent-dev/kagent/go/core/internal/service/session"
 )
@@ -31,7 +32,7 @@ func (s *sessionServer) GetSession(ctx context.Context, request *apiv1.GetSessio
 func (s *sessionServer) ListSessions(ctx context.Context, request *apiv1.ListSessionsRequest) (*apiv1.ListSessionsResponse, error) {
 	result, err := s.service.List(ctx, sessionsvc.ListRequest{
 		AllCreators: request.GetAllCreators(),
-		Agent:       request.GetAgent(),
+		Source:      definition.AgentReference(request.GetAgent()),
 		PageSize:    int(request.GetPage().GetLimit()), PageToken: request.GetPage().GetPageToken(),
 	})
 	if err != nil {

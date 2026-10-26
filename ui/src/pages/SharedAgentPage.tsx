@@ -1,3 +1,4 @@
+import { sessionTenant } from "@/api/chat/types";
 import { Alert, Skeleton, Typography } from "antd";
 import { useTheme } from "@emotion/react";
 import { useParams } from "react-router-dom";
@@ -40,7 +41,8 @@ export function SharedAgentPage() {
   useAgentInstanceShareToken(id, token);
 
   const instance = useAgentInstance(id);
-  const conversation = id && instance.data?.agent ? { id, agent: instance.data.agent } : undefined;
+  const source = instance.data?.source;
+  const conversation = id && source ? { id, agent: sessionTenant(source) } : undefined;
 
   const chat = useChat(conversation);
   const error = instance.error ?? chat.historyError;

@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	apiv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1"
 	"github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
@@ -85,14 +86,15 @@ func TestResolveAgentIdentity(t *testing.T) {
 			c["sub"] = "actor/other/" + actor["actorName"]
 		}, want: serviceerrors.CodePermissionDenied},
 		{name: "deleted Session", change: func(_ jwt.MapClaims, s *identityStore, _ *v1alpha3.Agent) { s.session = nil }, want: serviceerrors.CodePermissionDenied},
-		{name: "inconsistent revision", change: func(_ jwt.MapClaims, s *identityStore, _ *v1alpha3.Agent) { s.revision.AgentName = "other" }, want: serviceerrors.CodeInternal},
-		{name: "missing Agent UID", change: func(_ jwt.MapClaims, s *identityStore, _ *v1alpha3.Agent) { s.revision.AgentUID = "" }, want: serviceerrors.CodeInternal},
+		{name: "inconsistent revision", change: func(_ jwt.MapClaims, s *identityStore, _ *v1alpha3.Agent) { s.revision.Name = "other" }, want: serviceerrors.CodeInternal},
+		{name: "inconsistent Agent provenance", change: func(_ jwt.MapClaims, s *identityStore, _ *v1alpha3.Agent) { s.session.GetAgent().Uid = "other" }, want: serviceerrors.CodeInternal},
+		{name: "missing Agent UID", change: func(_ jwt.MapClaims, s *identityStore, _ *v1alpha3.Agent) { s.revision.UID = "" }, want: serviceerrors.CodeInternal},
 		{name: "recreated Agent", change: func(_ jwt.MapClaims, _ *identityStore, a *v1alpha3.Agent) { a.UID = "replacement" }, want: serviceerrors.CodeNotFound},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			id := uuid.NewString()
-			store := &identityStore{session: &apiv1.Session{Id: id, PreparedRevision: "revision", Agent: &apiv1.ResourceReference{Namespace: "team-a", Name: "assistant"}, A2AAuthority: substrate.ActorHost("team-a", substrate.ActorName(id), "")},
-				revision: &database.RuntimeRevision{Revision: "revision", Namespace: "team-a", AgentName: "assistant", AgentUID: "agent-uid"}}
+			store := &identityStore{session: &apiv1.Session{Id: id, PreparedRevision: "revision", A2AAuthority: substrate.ActorHost("team-a", substrate.ActorName(id), ""), Source: &apiv1.Session_Agent{Agent: &apiv1.AgentProvenance{Ref: &apiv1.ResourceReference{Namespace: "team-a", Name: "assistant"}, Uid: "agent-uid"}}},
+				revision: &database.RuntimeRevision{Source: definition.Source{Kind: definition.Agent, Namespace: "team-a", Name: "assistant", UID: "agent-uid"}, Revision: "revision"}}
 			agent := &v1alpha3.Agent{ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "assistant", UID: "agent-uid",
 				Labels: map[string]string{"team": "payments"}, Annotations: map[string]string{"description": "on-call helper", "kubectl.kubernetes.io/last-applied-configuration": `{"spec":{"example":"operator-supplied"}}`}}}
 			claims := issuer.Claims("team-a", substrate.ActorName(id), "actor-uid")
@@ -134,4 +136,35 @@ func TestResolveRequiresAuthenticatedIdentity(t *testing.T) {
 	result, err := service.Resolve(t.Context())
 	require.Nil(t, result)
 	require.Equal(t, serviceerrors.CodeUnauthenticated, serviceerrors.CodeOf(err))
+}
+
+func TestResolveScheduledRunIdentity(t *testing.T) {
+	issuer := jwttest.New(t)
+	verifier, err := substrate.NewActorJWTVerifier(t.Context(), issuer.URL, issuer.CAFile, substrate.RuntimeJWTAudience)
+	require.NoError(t, err)
+	id := uuid.NewString()
+	source := definition.Source{Kind: definition.ScheduledRun, Namespace: "team-a", Name: "daily", UID: "schedule-uid"}
+	store := &identityStore{
+		session: &apiv1.Session{Id: id, PreparedRevision: "revision", A2AAuthority: substrate.ActorHost("team-a", substrate.ActorName(id), ""),
+			Source: &apiv1.Session_ScheduledRun{ScheduledRun: &apiv1.ScheduledRunProvenance{Ref: source.Ref(), Uid: source.UID}},
+		}, revision: &database.RuntimeRevision{Source: source, Revision: "revision"},
+	}
+	schedule := &v1alpha3.ScheduledRun{ObjectMeta: metav1.ObjectMeta{Namespace: source.Namespace, Name: source.Name, UID: "schedule-uid", Labels: map[string]string{"owner": "schedule"}}}
+	agent := &v1alpha3.Agent{ObjectMeta: metav1.ObjectMeta{Namespace: source.Namespace, Name: source.Name, UID: "agent-uid", Labels: map[string]string{"owner": "agent"}}}
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1alpha3.AddToScheme(scheme))
+	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(schedule, agent).Build()
+	service := agentidentity.NewService(verifier, store, kube)
+	claims := issuer.Claims("team-a", substrate.ActorName(id), "actor-uid")
+	claims["aud"] = []string{agentidentity.Audience}
+	ctx, err := service.Authenticate(t.Context(), http.Header{"Authorization": {"Bearer " + issuer.Token(t, claims)}})
+	require.NoError(t, err)
+	result, err := service.Resolve(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "ScheduledRun", result.Agent.Kind)
+	require.Equal(t, source.UID, result.Agent.Uid)
+	require.Equal(t, schedule.Labels, result.Agent.Labels)
+	require.NoError(t, kube.Delete(t.Context(), schedule))
+	_, err = service.Resolve(ctx)
+	require.True(t, serviceerrors.IsCode(err, serviceerrors.CodeNotFound), "same-name Agent cannot replace the revision's source")
 }

@@ -3,8 +3,8 @@ import { Alert, Descriptions, Modal, Skeleton } from "antd";
 import { useTheme } from "@emotion/react";
 import { instanceFields } from "@/components/agent-instances/instanceFields";
 import { RenameConversationDialog } from "@/components/agent-instances/RenameConversationDialog";
-import { agentPageUrl } from "@/components/agent/agentUrl";
-import { bareName, type AgentInstance, type ApiError } from "@/api";
+import { instanceSourceUrl } from "@/components/agent/agentUrl";
+import { type AgentInstance, type ApiError } from "@/api";
 
 /**
  * One conversation's record, over the conversation.
@@ -41,13 +41,7 @@ export function ConversationDetailsModal({
   const data = instance.data;
   const [isRenaming, setRenaming] = useState(false);
 
-  const agentHref = data?.agent
-    ? agentPageUrl({
-      namespace: data.agent.split("/")[0],
-
-        name: bareName(data.agent),
-      })
-    : undefined;
+  const agentHref = instanceSourceUrl(data);
 
   return (
     <Modal

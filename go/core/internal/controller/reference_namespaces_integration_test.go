@@ -26,6 +26,13 @@ func (r referenceResult) ResourceName() string { return r.Name }
 
 // Real admission, informers, Namespace watches and resourceNames-scoped RBAC.
 func TestCrossNamespaceReferenceWatches(t *testing.T) {
+	for _, kind := range []string{"Agent", "ScheduledRun"} {
+		t.Run(kind, func(t *testing.T) { testCrossNamespaceReferenceWatches(t, kind) })
+	}
+}
+
+func testCrossNamespaceReferenceWatches(t *testing.T, kind string) {
+	t.Helper()
 	environment := &envtest.Environment{CRDDirectoryPaths: []string{"../../../../helm/kagent-crds/templates"}, ErrorIfCRDPathMissing: true}
 	config, err := environment.Start()
 	require.NoError(t, err)
@@ -42,7 +49,12 @@ func TestCrossNamespaceReferenceWatches(t *testing.T) {
 	model, err = client.Kagent().ApiV1alpha3().ModelConfigs("shared").Create(ctx, model, metav1.CreateOptions{})
 	require.NoError(t, err)
 	agent := &v1alpha3.Agent{ObjectMeta: metav1.ObjectMeta{Name: "assistant", Namespace: "team-a"}, Spec: v1alpha3.AgentSpec{HarnessRef: corev1.LocalObjectReference{Name: "runner"}, Template: v1alpha3.AgentTemplateSource{Inline: &v1alpha3.AgentTemplateSpec{ModelConfig: &v1alpha3.ObjectReference{Name: "model", Namespace: "shared"}}}}}
-	_, err = client.Kagent().ApiV1alpha3().Agents("team-a").Create(ctx, agent, metav1.CreateOptions{})
+	schedule := &v1alpha3.ScheduledRun{ObjectMeta: agent.ObjectMeta, Spec: v1alpha3.ScheduledRunSpec{Agent: agent.Spec, Schedule: "* * * * *", Prompt: "hello"}}
+	if kind == "ScheduledRun" {
+		_, err = client.Kagent().ApiV1alpha3().ScheduledRuns("team-a").Create(ctx, schedule, metav1.CreateOptions{})
+	} else {
+		_, err = client.Kagent().ApiV1alpha3().Agents("team-a").Create(ctx, agent, metav1.CreateOptions{})
+	}
 	require.NoError(t, err)
 	opts := krt.NewOptionsBuilder(ctx.Done(), "references", nil)
 	agents := typedCollection[*v1alpha3.Agent](client, []string{"team-a"}, "Agents", opts)
@@ -55,10 +67,12 @@ func TestCrossNamespaceReferenceWatches(t *testing.T) {
 		RemoteMCPServers: typedCollection[*v1alpha3.RemoteMCPServer](client, []string{"team-a", "shared"}, "Servers", opts),
 	}
 	_, inputs.ResolvedModelConfigs = newModelConfigReconciliations(models, inputs.ConfigMaps, inputs.Secrets, opts)
-	inputs.Namespaces = newReferenceNamespaces(client, agents, inputs, opts)
-	results := krt.NewCollection(agents, func(hctx krt.HandlerContext, agent *v1alpha3.Agent) *referenceResult {
-		_, err := translator.ResolveModelReference(hctx, inputs, agent.Namespace, *agent.Spec.Template.Inline.ModelConfig)
-		result := &referenceResult{Name: agent.Name}
+	schedules := typedCollection[*v1alpha3.ScheduledRun](client, []string{"team-a"}, "ScheduledRuns", opts)
+	sources := newDefinitionInputs(agents, schedules, opts)
+	inputs.Namespaces = newReferenceNamespaces(client, sources, inputs, opts)
+	results := krt.NewCollection(sources, func(hctx krt.HandlerContext, source definitionInput) *referenceResult {
+		_, err := translator.ResolveModelReference(hctx, inputs, source.Namespace, *source.Spec.Template.Inline.ModelConfig)
+		result := &referenceResult{Name: source.Key()}
 		if err != nil {
 			result.Error = err.Error()
 		}
@@ -69,7 +83,7 @@ func TestCrossNamespaceReferenceWatches(t *testing.T) {
 	expect := func(message string) {
 		t.Helper()
 		require.Eventually(t, func() bool {
-			r := results.GetKey("assistant")
+			r := results.GetKey(kind + "/team-a/assistant")
 			return r != nil && (message == "" && r.Error == "" || message != "" && strings.Contains(r.Error, message))
 		}, 10*time.Second, 10*time.Millisecond)
 	}
@@ -103,10 +117,17 @@ func TestCrossNamespaceReferenceWatches(t *testing.T) {
 	hidden.ResourceVersion, hidden.UID = "", ""
 	_, err = client.Kagent().ApiV1alpha3().ModelConfigs("unwatched").Create(ctx, hidden, metav1.CreateOptions{})
 	require.NoError(t, err)
-	agent, err = client.Kagent().ApiV1alpha3().Agents("team-a").Get(ctx, "assistant", metav1.GetOptions{})
-	require.NoError(t, err)
-	agent.Spec.Template.Inline.ModelConfig.Namespace = "unwatched"
-	_, err = client.Kagent().ApiV1alpha3().Agents("team-a").Update(ctx, agent, metav1.UpdateOptions{})
+	if kind == "ScheduledRun" {
+		schedule, err = client.Kagent().ApiV1alpha3().ScheduledRuns("team-a").Get(ctx, "assistant", metav1.GetOptions{})
+		require.NoError(t, err)
+		schedule.Spec.Agent.Template.Inline.ModelConfig.Namespace = "unwatched"
+		_, err = client.Kagent().ApiV1alpha3().ScheduledRuns("team-a").Update(ctx, schedule, metav1.UpdateOptions{})
+	} else {
+		agent, err = client.Kagent().ApiV1alpha3().Agents("team-a").Get(ctx, "assistant", metav1.GetOptions{})
+		require.NoError(t, err)
+		agent.Spec.Template.Inline.ModelConfig.Namespace = "unwatched"
+		_, err = client.Kagent().ApiV1alpha3().Agents("team-a").Update(ctx, agent, metav1.UpdateOptions{})
+	}
 	require.NoError(t, err)
 	expect("not found")
 

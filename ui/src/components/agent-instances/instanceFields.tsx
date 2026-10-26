@@ -1,3 +1,4 @@
+import { toRef } from "@/api/domain/common";
 import { Button, Space, Tooltip, Typography } from "antd";
 import type { DescriptionsProps } from "antd";
 import type { Theme } from "@emotion/react";
@@ -84,7 +85,7 @@ export function instanceFields(
   },
   {
     key: "agent",
-    label: "Agent",
+    label: data.source.kind === "ScheduledRun" ? "Scheduled run" : "Agent",
     // Full width, and not only because it is the most important field here:
     // antd warns when the spans in a line do not sum to `column`, and that
     // warning fails the browser suite. An odd number of single-span fields is
@@ -96,12 +97,9 @@ export function instanceFields(
         data-testid="instance-agent-link"
         css={{ fontFamily: theme.font.mono, color: theme.color.primaryText }}
       >
-        {data.agent}
+        {toRef(data.source.namespace, data.source.name)}
       </Link>
     ) : (
-      // Not a link and not a blank cell: an instance with no prepared revision
-      // belongs to no Agent, which is a fact about the record rather than a
-      // link this page forgot to render.
       <ValueOrNotReported value={undefined} />
     ),
   },

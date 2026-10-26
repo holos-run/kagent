@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	configv1 "github.com/kagent-dev/kagent/go/api/gen/kagent/config/v1"
 	"github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/egress"
@@ -142,9 +143,7 @@ func (c *Compiler) Compile(ctx context.Context, input *translator.HarnessInput) 
 	slices.Sort(egress)
 	egress = slices.Compact(egress)
 	return &translator.CompileResult{
-		Revision: translator.Revision{
-			Namespace:   template.Namespace,
-			SkillImages: skills.Images,
+		Revision: translator.Revision{Source: definition.Source{Kind: definition.Agent, Namespace: template.Namespace}, SkillImages: skills.Images,
 			Environment: environment, ConfigJSON: configJSON, AgentCard: card,
 			WorkerPoolName: harness.Spec.Substrate.WorkerPoolRef.Name, SnapshotLocation: harness.Spec.Substrate.SnapshotPolicy.Location,
 			TokenPassthroughTargets: tokenPassthroughTargets, Credentials: credentials, Provenance: provenance, EgressDestinations: egress,

@@ -1,3 +1,4 @@
+import { sessionTenant } from "@/api/chat/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useHref, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Alert, Button, Tooltip } from "antd";
@@ -104,8 +105,9 @@ export function AgentChatPage() {
    * rail reading its own copy would show a conversation this page had just removed.
    */
   const instances = useAgentInstances();
-  const agent = instance.data?.agent;
-  const canAttach = useAgentTakesFiles(agent);
+  const source = instance.data?.source;
+  const agent = source ? sessionTenant(source) : undefined;
+  const canAttach = useAgentTakesFiles(source);
   const contextId = instance.data?.contextId;
   const conversation = useMemo(
     () => (id && agent ? { id, agent, contextId } : undefined),

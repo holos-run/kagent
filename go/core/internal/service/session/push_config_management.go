@@ -8,8 +8,8 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/uuid"
-	"k8s.io/apimachinery/pkg/types"
 
+	"github.com/kagent-dev/kagent/go/api/definition"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
 	"github.com/kagent-dev/kagent/go/core/pkg/auth"
 	"github.com/kagent-dev/kagent/go/pkg/logging"
@@ -17,7 +17,7 @@ import (
 
 // CreateTaskPushConfig registers or replaces a callback for an existing task.
 // Task authorization precedes storage access so no configuration leaks across users.
-func (s *InteractionService) CreateTaskPushConfig(ctx context.Context, agent types.NamespacedName, req *a2a.PushConfig) (*a2a.PushConfig, error) {
+func (s *InteractionService) CreateTaskPushConfig(ctx context.Context, agent definition.Reference, req *a2a.PushConfig) (*a2a.PushConfig, error) {
 	config, err := validatePushConfig(agent, req, s.allowPushHTTP)
 	if err != nil {
 		return nil, err
@@ -39,7 +39,7 @@ func (s *InteractionService) CreateTaskPushConfig(ctx context.Context, agent typ
 	return publicPushConfig(config), nil
 }
 
-func (s *InteractionService) GetTaskPushConfig(ctx context.Context, agent types.NamespacedName, req *a2a.GetTaskPushConfigRequest) (*a2a.PushConfig, error) {
+func (s *InteractionService) GetTaskPushConfig(ctx context.Context, agent definition.Reference, req *a2a.GetTaskPushConfigRequest) (*a2a.PushConfig, error) {
 	if req == nil || req.TaskID == "" || req.ID == "" {
 		return nil, a2a.ErrInvalidParams
 	}
@@ -54,7 +54,7 @@ func (s *InteractionService) GetTaskPushConfig(ctx context.Context, agent types.
 	return &a2a.PushConfig{TaskID: req.TaskID, ID: config.ID, URL: config.URL}, nil
 }
 
-func (s *InteractionService) ListTaskPushConfigs(ctx context.Context, agent types.NamespacedName, req *a2a.ListTaskPushConfigRequest) (*a2a.ListTaskPushConfigResponse, error) {
+func (s *InteractionService) ListTaskPushConfigs(ctx context.Context, agent definition.Reference, req *a2a.ListTaskPushConfigRequest) (*a2a.ListTaskPushConfigResponse, error) {
 	if req == nil || req.TaskID == "" {
 		return nil, a2a.ErrInvalidParams
 	}
@@ -114,7 +114,7 @@ func decodePushPageToken(taskID, token string) (string, error) {
 	return configID, nil
 }
 
-func (s *InteractionService) DeleteTaskPushConfig(ctx context.Context, agent types.NamespacedName, req *a2a.DeleteTaskPushConfigRequest) error {
+func (s *InteractionService) DeleteTaskPushConfig(ctx context.Context, agent definition.Reference, req *a2a.DeleteTaskPushConfigRequest) error {
 	if req == nil || req.TaskID == "" || req.ID == "" {
 		return a2a.ErrInvalidParams
 	}

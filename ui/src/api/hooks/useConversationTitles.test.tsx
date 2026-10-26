@@ -14,7 +14,7 @@ function conversation(id: string): AgentInstance {
     id,
     name: "",
     creator: "",
-    agent: "team-a/assistant",
+    source: { kind: "Agent", namespace: "team-a", name: "assistant", uid: "agent-uid" },
     state: "ready",
     operation: "unspecified",
     createdAt: "",

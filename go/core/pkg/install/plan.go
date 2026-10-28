@@ -114,7 +114,7 @@ config:
 	substrate := cloneChart(cfg.Substrate)
 	substrate.InlineValues = substrateInstallValues(cfg.Namespace, serviceAccount) + "\n" + substrate.InlineValues
 	podcert := cloneChart(cfg.PodCertificate)
-	podcert.Values = append(podCertificateChartValues(substrate.Values, cfg.Namespace, serviceAccount, !cfg.SkipDatabaseSetup), podcert.Values...)
+	podcert.Values = append(postgresClientValues(cfg.Namespace, serviceAccount, !cfg.SkipDatabaseSetup), podcert.Values...)
 	if !cfg.SkipDatabaseSetup {
 		substrate.Values = append(substrate.Values, "postgres.clientCertificates.enabled=true")
 	}
@@ -168,14 +168,8 @@ func (c *Client) Apply(ctx context.Context, plan Plan, progress func(string)) er
 	return nil
 }
 
-func podCertificateChartValues(values []string, namespace, serviceAccount string, includeBundledPostgresClient bool) []string {
-	result := make([]string, 0, len(values)+2)
-	for _, value := range values {
-		key, _, _ := strings.Cut(value, "=")
-		if strings.HasPrefix(key, "image.") || strings.HasPrefix(key, "global.") || strings.HasPrefix(key, "imagePullSecrets") {
-			result = append(result, value)
-		}
-	}
+func postgresClientValues(namespace, serviceAccount string, includeBundledPostgresClient bool) []string {
+	var result []string
 	if includeBundledPostgresClient {
 		result = append(result,
 			fmt.Sprintf("postgresClients[0]=%s/%s=%s", namespace, serviceAccount, kagentsetup.OwnerUser),

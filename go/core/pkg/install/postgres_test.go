@@ -85,3 +85,15 @@ func TestBundledPostgresAssets(t *testing.T) {
 	require.Contains(t, (Postgres{}).SetupScript().SQL, ":'kagent_schema'")
 	require.Contains(t, (Postgres{}).SetupScript().SQL, ":'substrate_schema'")
 }
+
+func TestExtraHBARequiresApplicationRule(t *testing.T) {
+	original := bundledPostgresYAML
+	t.Cleanup(func() { bundledPostgresYAML = original })
+	bundledPostgresYAML = strings.ReplaceAll(bundledPostgresYAML, "hostssl kagent kagent_owner_user,kagent_readwrite_user,substrate_owner_user,substrate_readwrite_user all cert", "hostssl kagent replacement_user all cert")
+	p := Postgres{Namespace: "demo", Image: "postgres:18", ExtraHBA: []string{"hostssl audit audit_user all scram-sha-256"}}
+	_, err := p.Manifest()
+	require.ErrorContains(t, err, "no longer contains the application pg_hba.conf line")
+	p.ExtraHBA = nil
+	_, err = p.Manifest()
+	require.NoError(t, err)
+}

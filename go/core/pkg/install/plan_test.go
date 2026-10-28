@@ -58,7 +58,8 @@ func TestPlanAndApply(t *testing.T) {
 				cfg := testConfig()
 				cfg.SkipDatabaseSetup = skip
 				cfg.ProfileValues = "agents: {enabled: false}\n"
-				cfg.Substrate.Values = []string{"global.imageRegistry=mirror.example", "rustfs.enabled=false"}
+				cfg.Substrate.Values = []string{"global.setting=substrate-only", "rustfs.enabled=false"}
+				cfg.PodCertificate.Values = []string{"global.imageRegistry=mirror.example"}
 				if customCharts {
 					cfg.Kagent.Name, cfg.KagentCRDs.Name = "custom-kagent", "custom-kagent-crds"
 					cfg.Kagent.Values = []string{"controller.replicas=2"}
@@ -95,6 +96,7 @@ func TestPlanAndApply(t *testing.T) {
 				podcert := steps[3].(ChartInstall)
 				require.Contains(t, podcert.Chart.Values, "global.imageRegistry=mirror.example")
 				require.NotContains(t, podcert.Chart.Values, "rustfs.enabled=false")
+				require.NotContains(t, podcert.Chart.Values, "global.setting=substrate-only")
 				if skip {
 					require.NotContains(t, strings.Join(podcert.Chart.Values, " "), "postgresClients[")
 				} else {

@@ -24,9 +24,10 @@ func (c *Client) uninstallChart(ctx context.Context, release, namespace string) 
 	return false, fmt.Errorf("failed to uninstall %s: %w: %s", release, err, strings.TrimSpace(out))
 }
 
-// kagentReleaseNamespaces returns the namespaces holding a kagent Helm release.
+// kagentReleaseNamespaces includes CRD releases left by interrupted uninstalls.
+// Explicit status filters cover pending releases on both Helm 3 and Helm 4.
 func (c *Client) kagentReleaseNamespaces(ctx context.Context) ([]string, error) {
-	out, err := c.runner.Run(ctx, Command{Program: "helm", Args: []string{"list", "--all-namespaces", "--filter", "^kagent$", "--output", "json"}})
+	out, err := c.runner.Run(ctx, Command{Program: "helm", Args: []string{"list", "--all-namespaces", "--deployed", "--failed", "--pending", "--uninstalling", "--filter", "^kagent(-crds)?$", "--output", "json"}})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list kagent Helm releases: %w", err)
 	}
@@ -38,7 +39,9 @@ func (c *Client) kagentReleaseNamespaces(ctx context.Context) ([]string, error) 
 	}
 	namespaces := make([]string, 0, len(releases))
 	for _, release := range releases {
-		namespaces = append(namespaces, release.Namespace)
+		if !slices.Contains(namespaces, release.Namespace) {
+			namespaces = append(namespaces, release.Namespace)
+		}
 	}
 	return namespaces, nil
 }

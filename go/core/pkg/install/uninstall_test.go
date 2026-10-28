@@ -12,7 +12,7 @@ import (
 )
 
 func TestUninstallReversesInstall(t *testing.T) {
-	const listReleases = "helm list --all-namespaces --filter ^kagent$ --output json"
+	const listReleases = "helm list --all-namespaces --deployed --failed --pending --uninstalling --filter ^kagent(-crds)?$ --output json"
 	before := []string{
 		listReleases,
 		"kubectl delete sandboxtemplates.api.kagent.dev --all --all-namespaces --ignore-not-found --timeout=5m",
@@ -39,6 +39,7 @@ func TestUninstallReversesInstall(t *testing.T) {
 		{"external database", `[{"namespace":"kagent"}]`, "", "", false, slices.Concat(before, after)},
 		{"interrupted uninstall", `[]`, "", "", true, slices.Concat(before, after)},
 		{"wrong namespace", `[{"namespace":"other"}]`, "", "namespace other, not kagent", false, []string{listReleases}},
+		{"CRDs left in another namespace", `[{"name":"kagent-crds","namespace":"other"}]`, "", "namespace other, not kagent", false, []string{listReleases}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runner := &recordingRunner{run: func(cmd Command) (string, error) {

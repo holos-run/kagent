@@ -362,6 +362,8 @@ func Run(ctx context.Context, input *configv1.ControllerConfig, opts Options) er
 	checkpoints := checkpoint.NewService(store, authorizer, actors, sessionWorkflow)
 	gatewayDialer, err := a2agateway.NewRuntimeDialer(
 		cfg.GetSubstrate().GetRouterUrl(),
+		cfg.GetSubstrate().GetCaFile(),
+		cfg.GetSubstrate().GetClientCertFile(),
 		authenticator,
 	)
 	if err != nil {
@@ -393,7 +395,8 @@ func Run(ctx context.Context, input *configv1.ControllerConfig, opts Options) er
 		return fmt.Errorf("add scheduled run controller: %w", err)
 	}
 	sandboxTemplates := kubecrud.NewService(manager.GetClient(), authorizer, &kagentv1alpha3.SandboxTemplate{}, &kagentv1alpha3.SandboxTemplateList{}, kagentv1alpha3.SandboxTemplateKind)
-	guests, err := sandboxservice.NewGuestDialer(cfg.GetSubstrate().GetRouterUrl(), authenticator)
+	guests, err := sandboxservice.NewGuestDialer(cfg.GetSubstrate().GetRouterUrl(),
+		cfg.GetSubstrate().GetCaFile(), cfg.GetSubstrate().GetClientCertFile(), authenticator)
 	if err != nil {
 		return err
 	}

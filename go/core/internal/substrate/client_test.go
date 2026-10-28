@@ -2,14 +2,21 @@ package substrate
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"io"
+	"io/fs"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,11 +32,13 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestAteAPITLSConfig(t *testing.T) {
-	cfg, err := ateAPITLSConfig(Config{})
+func TestClientTLSConfig(t *testing.T) {
+	cfg, err := ClientTLSConfig("", "")
 	require.NoError(t, err)
 	require.False(t, cfg.InsecureSkipVerify)
 	require.Equal(t, uint16(tls.VersionTLS12), cfg.MinVersion)
+	require.Nil(t, cfg.RootCAs)
+	require.Nil(t, cfg.GetClientCertificate)
 
 	cert := newTestTLSCert(t)
 	key, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
@@ -37,12 +46,88 @@ func TestAteAPITLSConfig(t *testing.T) {
 	bundle := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]}), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key})...)
 	path := filepath.Join(t.TempDir(), "bundle.pem")
 	require.NoError(t, os.WriteFile(path, bundle, 0o600))
-	cfg, err = ateAPITLSConfig(Config{CAFile: path, ClientCertFile: path})
+	cfg, err = ClientTLSConfig(path, path)
 	require.NoError(t, err)
 	require.NotNil(t, cfg.RootCAs)
 	loaded, err := cfg.GetClientCertificate(&tls.CertificateRequestInfo{})
 	require.NoError(t, err)
 	require.NotEmpty(t, loaded.Certificate)
+}
+
+func TestClientTLSConfigMutualTLS(t *testing.T) {
+	ca, other := newTestCA(t), newTestCA(t)
+	dir := t.TempDir()
+	caFile := filepath.Join(dir, "ca.pem")
+	require.NoError(t, os.WriteFile(caFile, ca.certPEM(), 0o600))
+	otherFile := filepath.Join(dir, "other.pem")
+	require.NoError(t, os.WriteFile(otherFile, other.certPEM(), 0o600))
+	clientFile := filepath.Join(dir, "client.pem")
+	_, clientPEM := ca.issue(t, "client", x509.ExtKeyUsageClientAuth)
+	require.NoError(t, os.WriteFile(clientFile, clientPEM, 0o600))
+
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, r.TLS.PeerCertificates[0].Subject.CommonName)
+	}))
+	serverCert, _ := ca.issue(t, "atenet-router.ate-system.svc", x509.ExtKeyUsageServerAuth)
+	server.TLS = &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    ca.pool(),
+	}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	get := func(caFile, clientCertFile string) (string, error) {
+		cfg, err := ClientTLSConfig(caFile, clientCertFile)
+		require.NoError(t, err)
+		cfg.ServerName = "atenet-router.ate-system.svc"
+		client := &http.Client{Transport: &http.Transport{TLSClientConfig: cfg}}
+		defer client.CloseIdleConnections()
+		resp, err := client.Get(server.URL)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		return string(body), err
+	}
+
+	peer, err := get(caFile, clientFile)
+	require.NoError(t, err)
+	require.Equal(t, "client", peer)
+	_, err = get(otherFile, clientFile)
+	var unknown x509.UnknownAuthorityError
+	require.ErrorAs(t, err, &unknown)
+	_, err = get(caFile, "")
+	require.Error(t, err)
+}
+
+func TestClientTLSConfigReloadsClientCertificate(t *testing.T) {
+	ca := newTestCA(t)
+	path := filepath.Join(t.TempDir(), "client.pem")
+	cfg, err := ClientTLSConfig("", path)
+	require.NoError(t, err)
+	for _, name := range []string{"first", "rotated"} {
+		_, bundle := ca.issue(t, name, x509.ExtKeyUsageClientAuth)
+		require.NoError(t, os.WriteFile(path, bundle, 0o600))
+		cert, err := cfg.GetClientCertificate(&tls.CertificateRequestInfo{})
+		require.NoError(t, err)
+		leaf, err := x509.ParseCertificate(cert.Certificate[0])
+		require.NoError(t, err)
+		require.Equal(t, name, leaf.Subject.CommonName)
+	}
+	require.NoError(t, os.Remove(path))
+	_, err = cfg.GetClientCertificate(&tls.CertificateRequestInfo{})
+	require.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+func TestClientTLSConfigRejectsUnusableCAFile(t *testing.T) {
+	dir := t.TempDir()
+	_, err := ClientTLSConfig(filepath.Join(dir, "missing.pem"), "")
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	empty := filepath.Join(dir, "empty.pem")
+	require.NoError(t, os.WriteFile(empty, nil, 0o600))
+	_, err = ClientTLSConfig(empty, "")
+	require.ErrorContains(t, err, "contains no certificates")
 }
 
 func TestDial_verifiedTLSReachesReady(t *testing.T) {
@@ -253,6 +338,67 @@ func newTestTLSCert(t *testing.T) tls.Certificate {
 	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
 	require.NoError(t, err)
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+// testCA issues leaf certificates for TLS tests.
+type testCA struct {
+	cert *x509.Certificate
+	key  *ecdsa.PrivateKey
+}
+
+func newTestCA(t *testing.T) *testCA {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return &testCA{cert: cert, key: key}
+}
+
+func (ca *testCA) certPEM() []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.cert.Raw})
+}
+
+func (ca *testCA) pool() *x509.CertPool {
+	pool := x509.NewCertPool()
+	pool.AddCert(ca.cert)
+	return pool
+}
+
+// issue returns a leaf certificate and the one-file PEM bundle of its
+// certificate and key that a pod certificate volume holds.
+func (ca *testCA) issue(t *testing.T, name string, usage x509.ExtKeyUsage) (tls.Certificate, []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+	require.NoError(t, err)
+	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: name},
+		DNSNames:     []string{name},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{usage},
+	}, ca.cert, &key.PublicKey, ca.key)
+	require.NoError(t, err)
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+	bundle := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})...)
+	cert, err := tls.X509KeyPair(bundle, bundle)
+	require.NoError(t, err)
+	return cert, bundle
 }
 
 // listWorkersFake pages workers the way ate-api does: one row per page, and an empty

@@ -2,7 +2,6 @@ package a2agateway
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -33,8 +32,10 @@ type RuntimeDialer struct {
 }
 
 // NewRuntimeDialer configures private A2A gRPC calls through Substrate's
-// shared Atenet router; ate-target-actor selects the Actor.
-func NewRuntimeDialer(routerURL string, authenticator auth.AuthProvider) (*RuntimeDialer, error) {
+// shared Atenet router; ate-target-actor selects the Actor. An https router is
+// verified against caFile and authenticates with the clientCertFile pod
+// certificate.
+func NewRuntimeDialer(routerURL, caFile, clientCertFile string, authenticator auth.AuthProvider) (*RuntimeDialer, error) {
 	router, err := url.Parse(routerURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse Atenet router URL %q: %w", routerURL, err)
@@ -50,7 +51,12 @@ func NewRuntimeDialer(routerURL string, authenticator auth.AuthProvider) (*Runti
 	case "http":
 		transport = insecure.NewCredentials()
 	case "https":
-		transport = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, ServerName: router.Hostname()})
+		tlsConfig, err := substrate.ClientTLSConfig(caFile, clientCertFile)
+		if err != nil {
+			return nil, err
+		}
+		tlsConfig.ServerName = router.Hostname()
+		transport = credentials.NewTLS(tlsConfig)
 	default:
 		return nil, fmt.Errorf("atenet router URL %q must use http or https", routerURL)
 	}

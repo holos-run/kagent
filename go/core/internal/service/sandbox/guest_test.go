@@ -3,9 +3,11 @@ package sandbox_test
 import (
 	"context"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
@@ -158,7 +160,7 @@ func guestFixture(t *testing.T) (*sandboxservice.Service, context.Context, *test
 	router.Config.Protocols = protocols
 	router.Start()
 	t.Cleanup(router.Close)
-	guests, err := sandboxservice.NewGuestDialer(router.URL, testAuth{})
+	guests, err := sandboxservice.NewGuestDialer(router.URL, "", "", testAuth{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, guests.Close()) })
 	actors := &testActors{}
@@ -174,6 +176,15 @@ func guestFixture(t *testing.T) (*sandboxservice.Service, context.Context, *test
 
 func createRequest() *apiv1.CreateSandboxRequest {
 	return &apiv1.CreateSandboxRequest{SandboxTemplate: &apiv1.ResourceReference{Namespace: "team-a", Name: "scratch"}, RequestId: "create"}
+}
+
+func TestNewGuestDialerLoadsTLSFilesForHTTPS(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.pem")
+	_, err := sandboxservice.NewGuestDialer("https://atenet-router.ate-system.svc:443", missing, missing, testAuth{})
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	guests, err := sandboxservice.NewGuestDialer("http://atenet-router.ate-system.svc:80", missing, missing, testAuth{})
+	require.NoError(t, err)
+	require.NoError(t, guests.Close())
 }
 
 func TestSandboxGuestLifecycle(t *testing.T) {

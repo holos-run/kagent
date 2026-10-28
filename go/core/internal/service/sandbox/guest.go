@@ -2,7 +2,6 @@ package sandbox
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -33,14 +32,22 @@ type GuestDialer struct {
 	endpoint      string
 }
 
-func NewGuestDialer(routerURL string, authenticator auth.AuthProvider) (*GuestDialer, error) {
+// NewGuestDialer connects to sandbox guests through the Atenet router. An https
+// router is verified against caFile and authenticates with the clientCertFile
+// pod certificate.
+func NewGuestDialer(routerURL, caFile, clientCertFile string, authenticator auth.AuthProvider) (*GuestDialer, error) {
 	router, err := url.Parse(routerURL)
 	if err != nil || router.Host == "" || (router.Scheme != "http" && router.Scheme != "https") {
 		return nil, fmt.Errorf("invalid sandbox router URL")
 	}
 	transport := insecure.NewCredentials()
 	if router.Scheme == "https" {
-		transport = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, ServerName: router.Hostname()})
+		tlsConfig, err := substrate.ClientTLSConfig(caFile, clientCertFile)
+		if err != nil {
+			return nil, err
+		}
+		tlsConfig.ServerName = router.Hostname()
+		transport = credentials.NewTLS(tlsConfig)
 	}
 	conn, err := grpc.NewClient(router.Host, grpc.WithTransportCredentials(transport))
 	if err != nil {

@@ -2,8 +2,10 @@ package a2agateway
 
 import (
 	"context"
+	"io/fs"
 	"net"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -56,7 +58,7 @@ func TestRuntimeDialerRoutesUnaryAndStreamingCalls(t *testing.T) {
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
 	authenticator := &runtimeTestAuth{}
-	dialer, err := NewRuntimeDialer("http://"+listener.Addr().String(), authenticator)
+	dialer, err := NewRuntimeDialer("http://"+listener.Addr().String(), "", "", authenticator)
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -95,4 +97,12 @@ func TestRuntimeDialerRoutesUnaryAndStreamingCalls(t *testing.T) {
 			t.Fatal("runtime did not receive every call")
 		}
 	}
+}
+
+func TestNewRuntimeDialerLoadsTLSFilesForHTTPS(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.pem")
+	_, err := NewRuntimeDialer("https://atenet-router.ate-system.svc:443", missing, missing, &runtimeTestAuth{})
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	_, err = NewRuntimeDialer("http://atenet-router.ate-system.svc:80", missing, missing, &runtimeTestAuth{})
+	require.NoError(t, err)
 }

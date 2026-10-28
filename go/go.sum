@@ -667,6 +667,8 @@ github.com/hashicorp/memberlist v0.1.3/go.mod h1:ajVTdAv/9Im8oMAAj5G31PhhMCZJV2p
 github.com/hashicorp/serf v0.8.2/go.mod h1:6hOLApaqBFA1NXqRQAsxw9QxuDEvNxSQRwA/JwenrHc=
 github.com/hexops/gotextdiff v1.0.3 h1:gitA9+qJrrTCsiCl7+kh75nPqQt1cx4ZkudSTLoUqJM=
 github.com/hexops/gotextdiff v1.0.3/go.mod h1:pSWU5MAI3yDq+fZBTazCSJysOMbxWL1BSow5/V2vxeg=
+github.com/holos-run/substrate v0.6.1-0.20261028195031-475f49b02335 h1:eallTfBD589zPce56IOTLETnz9kIPpEXzxa0Pcmm0cA=
+github.com/holos-run/substrate v0.6.1-0.20261028195031-475f49b02335/go.mod h1:Y4n6FBNsJHYVcc2BerfoWV76KTtOqxLtUHYRtXgrrcQ=
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=
 github.com/huandu/xstrings v1.5.0 h1:2ag3IFq9ZDANvthTwTiqSSZLjDc+BedvHPAp5tJy2TI=
 github.com/huandu/xstrings v1.5.0/go.mod h1:y5/lhBue+AyNmUVz9RLU9xbLR0o4KIIExikq4ovT0aE=
@@ -716,8 +718,6 @@ github.com/kagent-dev/mockllm v0.1.0 h1:EkBE7BhMnL4Unfu78OazQVDAWi00aWXiswErkVoE
 github.com/kagent-dev/mockllm v0.1.0/go.mod h1:RLp2ZL/UPY6qqbHNogvf70apXX9R670tESJdDuIli9A=
 github.com/kagent-dev/mockmcp v0.0.0-20260520211643-dcd475b74085 h1:5bYxRc6K6+JiFMYGSJpQ7y18PzTGXUmUtVXY7Fqh0Ew=
 github.com/kagent-dev/mockmcp v0.0.0-20260520211643-dcd475b74085/go.mod h1:vTMste7c+XiDOQyhe6iGPKLbMy3chY/h2fL3Dox5fAE=
-github.com/kagent-dev/substrate v0.7.0-alpha1 h1:97wGaz+fJqkX/4QKKOKubtYqi9BPMRpTpkgxJHx/fqA=
-github.com/kagent-dev/substrate v0.7.0-alpha1/go.mod h1:LpxDQj4yK0PMXowlNPUXDR7/CkTv0eW9AmgUczkEICw=
 github.com/karamaru-alpha/copyloopvar v1.2.2 h1:yfNQvP9YaGQR7VaWLYcfZUlRP2eo2vhExWKxD/fP6q0=
 github.com/karamaru-alpha/copyloopvar v1.2.2/go.mod h1:oY4rGZqZ879JkJMtX3RRkcXRkmUvH0x35ykgaKgsgJY=
 github.com/keybase/go-keychain v0.0.1 h1:way+bWYa6lDppZoZcgMbYsvC7GxljxrskdNInRtuthU=

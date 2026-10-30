@@ -40,6 +40,7 @@ require (
 	github.com/lestrrat-go/jwx v1.2.31
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/muesli/reflow v0.3.0
+	github.com/muesli/termenv v0.16.0
 	github.com/ollama/ollama v0.40.5
 	github.com/openai/openai-go/v3 v3.78.0
 	github.com/pelletier/go-toml/v2 v2.4.3
@@ -348,7 +349,6 @@ require (
 	github.com/moricho/tparallel v0.3.2 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
-	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/nakabonne/nestif v0.3.1 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
@@ -512,4 +512,4 @@ tool (
 	sigs.k8s.io/controller-tools/cmd/controller-gen
 )
 
-replace go.ate.dev/substrate => github.com/kagent-dev/substrate v0.7.0-alpha2
+replace go.ate.dev/substrate => github.com/holos-run/substrate v0.6.1-0.20261030143335-f475d8b4cc8a

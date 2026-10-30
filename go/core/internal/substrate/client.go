@@ -227,7 +227,7 @@ func (c *Client) SuspendActor(ctx context.Context, atespace, actorID string) (*a
 			return nil, fmt.Errorf("actor %s/%s changed while waiting for its durable snapshot", atespace, actorID)
 		}
 		snapshot := LatestActorSnapshot(actor)
-		if snapshot.GetDurableSnapshot().GetStatus() != ateapipb.SnapshotStorageStatus_SNAPSHOT_STORAGE_STATUS_PENDING {
+		if snapshot.GetDurableSnapshot().GetState() != ateapipb.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_PENDING {
 			// The lifecycle owner validates fidelity and completeness; only a pending
 			// upload warrants polling. Never substitute an older completed generation.
 			return actor, nil
